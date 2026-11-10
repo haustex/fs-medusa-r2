@@ -1,0 +1,72 @@
+{
+  "r2": {
+    "footer": { "help": "Help" },
+    "settings": {
+      "title": "Cloudflare R2",
+      "description": "Where Medusa stores uploaded files: product images, import/export files, anything that goes through the File Module.",
+      "save": "Save",
+      "saved": "Settings saved. Uploads use them right away, no restart needed.",
+      "test": "Test connection",
+      "testing": "Testing…",
+      "not_set": "not set",
+      "current": "Current: {{value}}",
+      "source": "Source: {{source}}",
+      "sources": { "admin": "saved here", "options": "medusa-config.ts", "env": "environment variables", "none": "none" },
+      "status": {
+        "configured": "Configured",
+        "not_configured": "Not configured",
+        "missing": "Still missing: {{fields}}",
+        "provider_missing": "medusa-config.ts does not register this provider in the File Module yet: add medusa-storage-r2/providers/r2 (see the README). Settings can be saved, but uploads keep going to the current provider."
+      },
+      "connection": "Connection",
+      "account_id": "Account ID",
+      "account_id_hint": "Cloudflare dashboard → R2 → Overview, right-hand column. 32 hex characters.",
+      "jurisdiction": "Jurisdiction",
+      "jurisdiction_hint": "Only when the bucket was created with a jurisdiction (EU or FedRAMP).",
+      "jurisdictions": { "default": "Default (global)", "eu": "European Union", "fedramp": "FedRAMP" },
+      "endpoint": "S3 endpoint",
+      "endpoint_hint": "Derived from the account ID. Fill in only for another S3-compatible store (MinIO, …).",
+      "endpoint_derived": "Derived: {{endpoint}}",
+      "credentials": "Credentials",
+      "credentials_hint": "R2 → Manage R2 API Tokens → Create API Token, permission Object Read & Write, scoped to this bucket. Both halves are saved together, encrypted with R2_ENCRYPTION_KEY.",
+      "access_key_id": "Access Key ID",
+      "secret_access_key": "Secret Access Key",
+      "clear_credentials": "Remove saved credentials",
+      "encryption": "Encryption",
+      "encryption_status": {
+        "ok": "Credentials are stored encrypted and readable.",
+        "unused": "No credentials saved here yet.",
+        "missing": "R2_ENCRYPTION_KEY is not set on the server.",
+        "malformed": "R2_ENCRYPTION_KEY is not 64 hex characters.",
+        "mismatch": "R2_ENCRYPTION_KEY does not match the key the credentials were saved with."
+      },
+      "encryption_key_missing": "Set R2_ENCRYPTION_KEY (openssl rand -hex 32, the same value on server and worker) before saving credentials here.",
+      "storage": "Storage",
+      "bucket": "Bucket",
+      "bucket_hint": "Public files: product images and everything else Medusa serves to visitors.",
+      "public_url": "Public URL",
+      "public_url_hint": "How the bucket is reached from the browser: the r2.dev URL (R2 → bucket → Settings → Public access) or your custom domain. Without it, public files only get temporary links.",
+      "prefix": "Folder (prefix)",
+      "prefix_hint": "Optional folder inside the bucket, e.g. medusa. Files are stored as <folder>/<name>-<id>.<ext>.",
+      "private_bucket": "Private bucket",
+      "private_bucket_hint": "Optional second bucket, without public access, for files Medusa marks private (exports, imports). Empty: the same bucket.",
+      "advanced": "Advanced",
+      "cache_control": "Cache-Control",
+      "cache_control_hint": "Header stored with every upload. Keys are unique, so a long immutable cache is safe.",
+      "download_url_ttl": "Download links (s)",
+      "download_url_ttl_hint": "Lifetime of presigned download links for private files, 60 s to 7 days.",
+      "upload_url_ttl": "Upload links (s)",
+      "upload_url_ttl_hint": "Lifetime of presigned upload links, 60 s to 7 days.",
+      "test_ok": "Connection OK ({{ms}} ms): bucket reachable, write, read and delete work.",
+      "test_failed": "Connection test failed ({{ms}} ms).",
+      "checks": {
+        "bucket": "Bucket reachable",
+        "write": "Write object",
+        "read": "Read object back",
+        "public_url": "Public URL serves the file",
+        "private_bucket": "Private bucket reachable",
+        "delete": "Delete object"
+      }
+    }
+  }
+}

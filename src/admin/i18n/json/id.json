@@ -1,0 +1,72 @@
+{
+  "r2": {
+    "footer": { "help": "Bantuan" },
+    "settings": {
+      "title": "Cloudflare R2",
+      "description": "Tempat Medusa menyimpan file yang diunggah: foto produk, file impor/ekspor, semua yang lewat File Module.",
+      "save": "Simpan",
+      "saved": "Pengaturan tersimpan. Unggahan langsung memakainya, tanpa restart.",
+      "test": "Tes koneksi",
+      "testing": "Mengetes…",
+      "not_set": "belum diisi",
+      "current": "Saat ini: {{value}}",
+      "source": "Sumber: {{source}}",
+      "sources": { "admin": "disimpan di sini", "options": "medusa-config.ts", "env": "environment variable", "none": "tidak ada" },
+      "status": {
+        "configured": "Terkonfigurasi",
+        "not_configured": "Belum terkonfigurasi",
+        "missing": "Masih kurang: {{fields}}",
+        "provider_missing": "medusa-config.ts belum mendaftarkan provider ini di File Module: tambahkan medusa-storage-r2/providers/r2 (lihat README). Pengaturan bisa disimpan, tapi unggahan masih ke provider yang sekarang."
+      },
+      "connection": "Koneksi",
+      "account_id": "Account ID",
+      "account_id_hint": "Dashboard Cloudflare → R2 → Overview, kolom kanan. 32 karakter heksadesimal.",
+      "jurisdiction": "Yurisdiksi",
+      "jurisdiction_hint": "Hanya kalau bucket dibuat dengan yurisdiksi (EU atau FedRAMP).",
+      "jurisdictions": { "default": "Default (global)", "eu": "Uni Eropa", "fedramp": "FedRAMP" },
+      "endpoint": "Endpoint S3",
+      "endpoint_hint": "Diturunkan dari Account ID. Isi hanya untuk penyimpanan S3-compatible lain (MinIO, …).",
+      "endpoint_derived": "Turunan: {{endpoint}}",
+      "credentials": "Kredensial",
+      "credentials_hint": "R2 → Manage R2 API Tokens → Create API Token, izin Object Read & Write, dibatasi ke bucket ini. Keduanya disimpan bersamaan, terenkripsi dengan R2_ENCRYPTION_KEY.",
+      "access_key_id": "Access Key ID",
+      "secret_access_key": "Secret Access Key",
+      "clear_credentials": "Hapus kredensial tersimpan",
+      "encryption": "Enkripsi",
+      "encryption_status": {
+        "ok": "Kredensial tersimpan terenkripsi dan bisa dibaca.",
+        "unused": "Belum ada kredensial yang disimpan di sini.",
+        "missing": "R2_ENCRYPTION_KEY belum diset di server.",
+        "malformed": "R2_ENCRYPTION_KEY bukan 64 karakter heksadesimal.",
+        "mismatch": "R2_ENCRYPTION_KEY berbeda dari kunci saat kredensial disimpan."
+      },
+      "encryption_key_missing": "Set R2_ENCRYPTION_KEY (openssl rand -hex 32, nilai sama di server dan worker) sebelum menyimpan kredensial di sini.",
+      "storage": "Penyimpanan",
+      "bucket": "Bucket",
+      "bucket_hint": "File publik: foto produk dan semua yang Medusa tampilkan ke pengunjung.",
+      "public_url": "URL publik",
+      "public_url_hint": "Alamat bucket dari browser: URL r2.dev (R2 → bucket → Settings → Public access) atau custom domain Anda. Tanpa ini, file publik hanya dapat tautan sementara.",
+      "prefix": "Folder (prefix)",
+      "prefix_hint": "Folder opsional di dalam bucket, mis. medusa. File disimpan sebagai <folder>/<nama>-<id>.<ext>.",
+      "private_bucket": "Bucket privat",
+      "private_bucket_hint": "Bucket kedua opsional, tanpa akses publik, untuk file yang Medusa tandai privat (ekspor, impor). Kosong: bucket yang sama.",
+      "advanced": "Lanjutan",
+      "cache_control": "Cache-Control",
+      "cache_control_hint": "Header yang disimpan di setiap unggahan. Key unik, jadi cache immutable yang panjang aman.",
+      "download_url_ttl": "Tautan unduh (dtk)",
+      "download_url_ttl_hint": "Masa berlaku tautan unduh presigned untuk file privat, 60 dtk sampai 7 hari.",
+      "upload_url_ttl": "Tautan unggah (dtk)",
+      "upload_url_ttl_hint": "Masa berlaku tautan unggah presigned, 60 dtk sampai 7 hari.",
+      "test_ok": "Koneksi OK ({{ms}} ms): bucket terjangkau, tulis, baca, dan hapus berhasil.",
+      "test_failed": "Tes koneksi gagal ({{ms}} ms).",
+      "checks": {
+        "bucket": "Bucket terjangkau",
+        "write": "Tulis objek",
+        "read": "Baca ulang objek",
+        "public_url": "URL publik melayani file",
+        "private_bucket": "Bucket privat terjangkau",
+        "delete": "Hapus objek"
+      }
+    }
+  }
+}

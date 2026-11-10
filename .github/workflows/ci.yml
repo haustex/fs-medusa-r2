@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call: # release.yml runs the full suite before publishing
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Medusa ${{ matrix.medusa }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # 2.19.0 is the lockfile's (lowest supported) version; 2.22.2 the latest tested
+        medusa: ["2.19.0", "2.22.2"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Use Medusa ${{ matrix.medusa }}
+        if: matrix.medusa != '2.19.0'
+        run: node scripts/use-medusa.mjs ${{ matrix.medusa }}
+
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:unit
+      - run: npm run build
+      - name: Package contents
+        run: node scripts/check-pack.mjs
+
+      # Same container name and port as CONTRIBUTING.md; scripts/guard.mjs accepts nothing else.
+      - name: Start Postgres
+        # Healthy only once the final server answers over TCP (the image's init server is socket-only and restarts)
+        run: |
+          docker run -d --name r2-spike-pg -e POSTGRES_PASSWORD=spike -e POSTGRES_DB=r2_spike \
+            --health-cmd "pg_isready -h 127.0.0.1 -U postgres" --health-interval 1s --health-timeout 5s --health-retries 60 \
+            -p 127.0.0.1:55435:5432 postgres:17-alpine
+          for _ in $(seq 1 60); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' r2-spike-pg)" = healthy ] && exit 0
+            sleep 1
+          done
+          echo "::error::Postgres container r2-spike-pg not healthy after 60 s"
+          docker logs r2-spike-pg | tail -30
+          exit 1
+
+      - name: Start RustFS (S3-compatible stand-in for R2)
+        run: |
+          docker run -d --name r2-spike-minio -e RUSTFS_ACCESS_KEY=minioadmin -e RUSTFS_SECRET_KEY=minioadmin \
+            -p 127.0.0.1:59000:9000 rustfs/rustfs:latest
+          for _ in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:59000/ || true)
+            [ "$code" != "000" ] && exit 0
+            sleep 1
+          done
+          echo "::error::RustFS not answering after 60 s"
+          docker logs r2-spike-minio | tail -30
+          exit 1
+
+      - name: E2E (settings through the Admin)
+        run: node integration-tests/e2e.mjs
+      - name: E2E (provider options only)
+        run: R2_E2E_OPTIONS=1 node integration-tests/e2e.mjs
+
+      - name: Logs
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: e2e-logs-${{ matrix.medusa }}
+          path: integration-tests/.state
+          retention-days: 7
