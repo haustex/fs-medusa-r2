@@ -123,8 +123,15 @@ function linkNodeModules() {
   fs.symlinkSync(PLUGIN_DIR, path.join(target, "medusa-storage-r2"))
 }
 
-function psql(sql) {
-  run("docker", ["exec", PG_CONTAINER, "psql", "-h", "127.0.0.1", "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-c", sql])
+/** Runs SQL; with a database name, returns the unaligned result instead of streaming it to the console. */
+function psql(sql, db) {
+  if (!db) {
+    run("docker", ["exec", PG_CONTAINER, "psql", "-h", "127.0.0.1", "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-c", sql])
+    return ""
+  }
+  const out = spawnSync("docker", ["exec", PG_CONTAINER, "psql", "-h", "127.0.0.1", "-U", "postgres", "-d", db, "-v", "ON_ERROR_STOP=1", "-tAc", sql], { encoding: "utf8" })
+  if (out.status !== 0) throw new Error(`psql failed: ${out.stderr}`)
+  return out.stdout
 }
 
 async function waitForPostgres() {
@@ -530,6 +537,70 @@ async function checks() {
   check("rotating back restores the running server", rot.status === 0 && r.json.settings.encryption.status === "ok" && r.json.settings.configured === true, r.json.settings)
   r = await api("POST", "/admin/uploads", { headers: admin, raw: multipart([{ name: "after-rotation.png", type: "image/png", content: PNG }]) })
   check("uploads work with the rotated credentials", r.status === 200 && (await fetch(r.json.files[0].url)).status === 200, r.json)
+
+  await migrationChecks(admin)
+}
+
+/** migrate-to-r2 (medusa exec): local static/ → R2 with dry-run, verify, rewrite, resume, failure, rollback */
+async function migrationChecks(admin) {
+  console.log("\nMigration static/ → R2 (medusa exec)")
+  const staticDir = path.join(STATE_DIR, "static")
+  const reportDir = path.join(STATE_DIR, "r2-migration")
+  fs.rmSync(staticDir, { recursive: true, force: true })
+  fs.rmSync(reportDir, { recursive: true, force: true })
+  fs.mkdirSync(path.join(staticDir, "products"), { recursive: true })
+  const bigFile = Buffer.alloc(6 * 1024 * 1024, 7)
+  fs.writeFileSync(path.join(staticDir, "products", "talenan jati.png"), PNG)
+  fs.writeFileSync(path.join(staticDir, "catalog.csv"), "sku,title\n1,Talenan")
+  fs.writeFileSync(path.join(staticDir, "products", "big.bin"), bigFile)
+  const BASE_URL = "http://files.e2e.test/static"
+  const oldUrls = {
+    png: `${BASE_URL}/products/talenan%20jati.png`,
+    csv: `${BASE_URL}/catalog.csv`,
+    big: `${BASE_URL}/products/big.bin`,
+    missing: `${BASE_URL}/products/gone.png`,
+  }
+  let r = await api("POST", "/admin/products", { headers: admin, body: { title: "Migration test", options: [{ title: "Size", values: ["One"] }], thumbnail: oldUrls.png, images: [{ url: oldUrls.png }, { url: oldUrls.big }, { url: "https://elsewhere.test/x.png" }] } })
+  check("product with old image URLs created", r.status === 200 && r.json.product?.id, r.json)
+  const productId = r.json.product?.id
+  psql(`CREATE TABLE IF NOT EXISTS e2e_media (id serial primary key, url text)`, DB_NAME)
+  psql(`INSERT INTO e2e_media (url) VALUES ('${oldUrls.csv}'), ('${oldUrls.missing}')`, DB_NAME)
+  const prefix = `${P}shop/2026/`
+  const newUrl = (rel) => `${S3.publicUrl}/${encodeKey(prefix + rel)}`
+  const migrate = (...words) =>
+    spawnSync("node", [GUARD, MEDUSA, "exec", path.join(PLUGIN_DIR, ".medusa/server/src/scripts/migrate-to-r2.js"), "source=local", `static-dir=${staticDir}`, `base-url=${BASE_URL}`, `report=${reportDir}`, "tables=image.url,product.thumbnail,e2e_media.url", ...words], { cwd: APP_DIR, env, encoding: "utf8" })
+  const reports = () => fs.readdirSync(reportDir).filter((f) => f.startsWith("report-")).sort()
+  const lastReport = () => fs.readFileSync(path.join(reportDir, reports().at(-1)), "utf8")
+  const dbUrls = () => ({
+    thumbnail: psql(`SELECT thumbnail FROM product WHERE id = '${productId}'`, DB_NAME).trim(),
+    images: psql(`SELECT url FROM image WHERE product_id = '${productId}' ORDER BY url`, DB_NAME).trim().split("\n").sort(),
+    media: psql(`SELECT url FROM e2e_media ORDER BY id`, DB_NAME).trim().split("\n"),
+  })
+
+  let out = migrate("dry-run")
+  let csv = lastReport()
+  check("dry run lists every URL under base-url with its size and touches nothing", out.status === 0 && /dry run.*3 file\(s\)/.test(out.stdout + out.stderr) && (csv.match(/,dry-run,/g) ?? []).length === 3 && /,failed,/.test(csv) && !(await objectExists(S3.bucket, `${prefix}products/talenan jati.png`)) && dbUrls().thumbnail === oldUrls.png, { out: (out.stdout + out.stderr).slice(-400), csv })
+
+  out = migrate()
+  csv = lastReport()
+  const big = await s3.send(new HeadObjectCommand({ Bucket: S3.bucket, Key: `${prefix}products/big.bin` })).catch(() => null)
+  const png = await s3.send(new HeadObjectCommand({ Bucket: S3.bucket, Key: `${prefix}products/talenan jati.png` })).catch(() => null)
+  check("files are copied under the prefix with sniffed type, verified size and the configured Cache-Control", out.status === 0 && png?.ContentType === "image/png" && png?.ContentLength === PNG.length && big?.ContentLength === bigFile.length && png?.CacheControl === "public, max-age=600", { out: (out.stdout + out.stderr).slice(-400), png: png?.ContentType, big: big?.ContentLength })
+  check("report: 3 rewritten, the missing file failed, the foreign URL untouched", (csv.match(/,rewritten,/g) ?? []).length === 3 && /gone\.png.*,failed,/.test(csv) && !csv.includes("elsewhere.test"), csv)
+  let db = dbUrls()
+  check("URLs rewritten in product.thumbnail, image.url and the extra table; failed + foreign URLs unchanged", db.thumbnail === newUrl("products/talenan jati.png") && db.images.join() === [newUrl("products/big.bin"), newUrl("products/talenan jati.png"), "https://elsewhere.test/x.png"].sort().join() && db.media.join() === `${newUrl("catalog.csv")},${oldUrls.missing}`, db)
+  let res = await fetch(db.thumbnail)
+  check("the new thumbnail URL serves the file from R2", res.status === 200 && Buffer.from(await res.arrayBuffer()).equals(PNG), res.status)
+  check("source files were not deleted", fs.existsSync(path.join(staticDir, "products", "talenan jati.png")) && fs.existsSync(path.join(staticDir, "products", "big.bin")))
+
+  fs.writeFileSync(path.join(staticDir, "products", "gone.png"), PNG)
+  out = migrate("resume")
+  csv = lastReport()
+  check("resume skips verified files and copies the one that failed before", out.status === 0 && (csv.match(/,skipped,/g) ?? []).length === 0 && (csv.match(/,rewritten,/g) ?? []).length === 1 && /gone\.png.*,rewritten,/.test(csv) && dbUrls().media[1] === newUrl("products/gone.png"), { out: (out.stdout + out.stderr).slice(-300), csv })
+
+  out = migrate("rollback")
+  db = dbUrls()
+  check("rollback restores the old URLs and deletes nothing", out.status === 0 && /rolled back 5 row/.test(out.stdout + out.stderr) && db.thumbnail === oldUrls.png && db.media.join() === `${oldUrls.csv},${oldUrls.missing}` && (await objectExists(S3.bucket, `${prefix}products/talenan jati.png`)) && fs.existsSync(path.join(staticDir, "catalog.csv")), { out: (out.stdout + out.stderr).slice(-300), db })
 }
 
 /** R2_E2E_OPTIONS=1: no Admin row, everything from the provider options */
