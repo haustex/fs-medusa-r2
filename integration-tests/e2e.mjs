@@ -18,6 +18,7 @@ import { createRequire } from "node:module"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { Readable } from "node:stream"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PLUGIN_DIR = path.resolve(HERE, "..")
@@ -33,6 +34,8 @@ const {
   PutBucketPolicyCommand,
   ListObjectsV2Command,
   DeleteObjectsCommand,
+  GetBucketCorsCommand,
+  DeleteBucketCorsCommand,
 } = require("@aws-sdk/client-s3")
 
 const DB_NAME = "r2_e2e"
@@ -142,6 +145,8 @@ async function prepareBuckets() {
     if (list.Contents?.length) {
       await s3.send(new DeleteObjectsCommand({ Bucket, Delete: { Objects: list.Contents.map(({ Key }) => ({ Key })), Quiet: true } }))
     }
+    // the CORS checks start from a bucket without a policy
+    await s3.send(new DeleteBucketCorsCommand({ Bucket })).catch(() => undefined)
   }
   await s3.send(
     new PutBucketPolicyCommand({
@@ -172,12 +177,23 @@ function check(name, ok, detail) {
   console.log(`${ok ? "  ✓" : "  ✗"} ${name}${ok || detail === undefined ? "" : `\n      ${JSON.stringify(detail)?.slice(0, 600)}`}`)
 }
 
+const encodeKey = (key) => key.split("/").map(encodeURIComponent).join("/")
+
+/** raw: a FormData, or { body: Buffer, type, chunked } (chunked = streamed without content-length) */
 async function api(method, url, { body, headers = {}, raw } = {}) {
-  const res = await fetch(BASE + url, {
-    method,
-    headers: raw ? headers : { "content-type": "application/json", ...headers },
-    body: raw ?? (body ? JSON.stringify(body) : undefined),
-  })
+  let sendHeaders = raw ? headers : { "content-type": "application/json", ...headers }
+  let sendBody = raw ?? (body ? JSON.stringify(body) : undefined)
+  let duplex
+  if (raw && !(raw instanceof FormData)) {
+    sendHeaders = { ...headers, "content-type": raw.type }
+    if (raw.chunked) {
+      sendBody = Readable.toWeb(Readable.from([raw.body]))
+      duplex = "half"
+    } else {
+      sendBody = raw.body
+    }
+  }
+  const res = await fetch(BASE + url, { method, headers: sendHeaders, body: sendBody, duplex })
   const text = await res.text()
   let json
   try {
@@ -330,24 +346,48 @@ async function checks() {
   r = await api("DELETE", `/admin/uploads/${encodeURIComponent(up.id)}`, { headers: admin })
   check("DELETE /admin/uploads/:id removes the object", r.status === 200 && !(await objectExists(S3.bucket, up.id)), r.json)
 
+  console.log("\nContent type, file names, streams")
+  r = await api("POST", "/admin/uploads", { headers: admin, raw: multipart([{ name: "mislabeled.bin", type: "application/octet-stream", content: PNG }]) })
+  let headRes = await s3.send(new HeadObjectCommand({ Bucket: S3.bucket, Key: r.json.files[0].id }))
+  check("content type comes from the bytes, not the client (PNG sent as octet-stream)", r.status === 200 && headRes.ContentType === "image/png", headRes.ContentType)
+  const odd = "Talenan Jati #1 – ukuran 30×20 (tes) ñ 日本.png"
+  r = await api("POST", "/admin/uploads", { headers: admin, raw: multipart([{ name: odd, type: "image/png", content: PNG }]) })
+  const oddFile = r.json.files?.[0]
+  res = oddFile ? await fetch(oddFile.url) : null
+  check("unicode / space / # file names round-trip through the key and the public URL", r.status === 200 && oddFile.id.startsWith("medusa/Talenan Jati #1 – ukuran 30×20 (tes) ñ 日本-") && res.status === 200 && Buffer.from(await res.arrayBuffer()).equals(PNG) && (await objectExists(S3.bucket, oddFile.id)), { id: oddFile?.id, url: oddFile?.url, status: res?.status })
+
+  const big = Buffer.alloc(12 * 1024 * 1024)
+  for (let i = 0; i < big.length; i += 4096) big.writeUInt32LE(i, i)
+  PNG.copy(big, 0)
+  r = await api("PUT", `/admin/e2e/file?filename=${encodeURIComponent("video/big stream.bin")}&mimeType=application/octet-stream`, { headers: admin, raw: { body: big, type: "application/octet-stream", chunked: true } })
+  const bigKey = r.json.fileKey
+  headRes = bigKey ? await s3.send(new HeadObjectCommand({ Bucket: S3.bucket, Key: bigKey })) : null
+  check("12 MB stream upload without content-length completes as multipart (size + sniffed type)", r.status === 200 && headRes?.ContentLength === big.length && headRes?.ContentType === "image/png", { status: r.status, len: headRes?.ContentLength, type: headRes?.ContentType, body: r.json })
+  res = bigKey ? await fetch(`${S3.publicUrl}/${encodeKey(bigKey)}`) : null
+  check("…and the public URL serves it byte for byte", res?.status === 200 && Buffer.from(await res.arrayBuffer()).equals(big), res?.status)
+  r = await api("PUT", `/admin/e2e/file?filename=small.txt&mimeType=text/plain`, { headers: admin, raw: { body: Buffer.from("tiny"), type: "application/octet-stream", chunked: true } })
+  check("stream upload smaller than the sniff window still completes", r.status === 200 && (await (await fetch(r.json.file.url)).text()) === "tiny", r.json)
+  r = await api("PUT", `/admin/e2e/file?filename=empty.txt&mimeType=text/plain`, { headers: admin, raw: { body: Buffer.alloc(0), type: "application/octet-stream", chunked: true } })
+  check("empty stream upload completes", r.status === 200 && (await s3.send(new HeadObjectCommand({ Bucket: S3.bucket, Key: r.json.fileKey }))).ContentLength === 0, r.json)
+
   console.log("\nPrivate files")
   r = await api("POST", "/admin/e2e/file", { headers: admin, body: { filename: "exports/products.csv", content: Buffer.from("id,title\n1,A").toString("base64"), mimeType: "text/csv", access: "private" } })
-  const priv = r.json.file
-  check("private file without a private bucket goes to the main bucket, URL is presigned", r.status === 200 && priv.id.startsWith("medusa/exports/products-") && /X-Amz-Signature/.test(priv.url) && (await objectExists(S3.bucket, priv.id)), r.json)
-  r = await api("GET", `/admin/e2e/file?key=${encodeURIComponent(priv.id)}`, { headers: admin })
-  check("getAsBuffer and retrieveFile work", r.status === 200 && r.json.content === "id,title\n1,A" && /X-Amz-Signature/.test(r.json.url), r.json)
+  check("private file without a private bucket is REJECTED (never written to the public bucket)", r.status === 400 && /private bucket/i.test(r.json.message) && /never written to the public bucket/.test(r.json.message), r.json)
+  check("…and nothing landed in the public bucket", (await s3.send(new ListObjectsV2Command({ Bucket: S3.bucket, Prefix: "medusa/exports/" }))).KeyCount === undefined || (await s3.send(new ListObjectsV2Command({ Bucket: S3.bucket, Prefix: "medusa/exports/" }))).KeyCount === 0)
+  r = await api("PUT", `/admin/e2e/file?filename=${encodeURIComponent("exports/stream.csv")}&mimeType=text/csv&access=private`, { headers: admin, raw: { body: Buffer.from("a,b"), type: "application/octet-stream" } })
+  check("private stream upload without a private bucket is rejected too", r.status === 400 && /private bucket/i.test(r.json.message), r.json)
 
   r = await api("POST", "/admin/r2/settings", { headers: admin, body: { private_bucket: S3.privateBucket } })
   check("private bucket saved", r.status === 200 && r.json.settings.private_bucket === S3.privateBucket, r.json)
-  r = await api("POST", "/admin/e2e/file", { headers: admin, body: { filename: "exports/orders.csv", content: Buffer.from("x").toString("base64"), mimeType: "text/csv", access: "private" } })
-  const priv2 = r.json.file
-  check("private file now lands in the private bucket", r.status === 200 && (await objectExists(S3.privateBucket, priv2.id)) && !(await objectExists(S3.bucket, priv2.id)), r.json)
-  r = await api("GET", `/admin/e2e/file?key=${encodeURIComponent(priv2.id)}`, { headers: admin })
-  check("reads locate the object in the private bucket", r.status === 200 && r.json.content === "x" && (await fetch(r.json.url)).status === 200, r.json)
+  r = await api("POST", "/admin/e2e/file", { headers: admin, body: { filename: "exports/products.csv", content: Buffer.from("id,title\n1,A").toString("base64"), mimeType: "text/csv", access: "private" } })
+  const priv = r.json.file
+  check("private file lands in the private bucket with a presigned URL", r.status === 200 && priv.id.startsWith("medusa/exports/products-") && /X-Amz-Signature/.test(priv.url) && (await objectExists(S3.privateBucket, priv.id)) && !(await objectExists(S3.bucket, priv.id)), r.json)
+  const privHead = await s3.send(new HeadObjectCommand({ Bucket: S3.privateBucket, Key: priv.id }))
+  check("private objects are stored with Cache-Control: private, no-store", privHead.CacheControl === "private, no-store", privHead.CacheControl)
   r = await api("GET", `/admin/e2e/file?key=${encodeURIComponent(priv.id)}`, { headers: admin })
-  check("…and still find older private files in the main bucket", r.status === 200 && r.json.content === "id,title\n1,A", r.json)
-  r = await api("DELETE", `/admin/e2e/file?key=${encodeURIComponent(priv2.id)}`, { headers: admin })
-  check("delete removes it from the private bucket", r.status === 200 && !(await objectExists(S3.privateBucket, priv2.id)), r.json)
+  check("getAsBuffer and retrieveFile locate it in the private bucket", r.status === 200 && r.json.content === "id,title\n1,A" && /X-Amz-Signature/.test(r.json.url) && (await fetch(r.json.url)).status === 200, r.json)
+  r = await api("DELETE", `/admin/e2e/file?key=${encodeURIComponent(priv.id)}`, { headers: admin })
+  check("delete removes it from the private bucket", r.status === 200 && !(await objectExists(S3.privateBucket, priv.id)), r.json)
   r = await api("POST", "/admin/e2e/file", { headers: admin, body: { filename: "public.txt", content: Buffer.from("hello").toString("base64"), mimeType: "text/plain", access: "public" } })
   check("public files still go to the public bucket", r.status === 200 && (await objectExists(S3.bucket, r.json.file.id)) && (await (await fetch(r.json.file.url)).text()) === "hello", r.json)
 
@@ -358,6 +398,40 @@ async function checks() {
   check("PUT to the presigned URL stores the object", res.status === 200 && (await objectExists(S3.bucket, r.json.filename)), res.status)
   res = await fetch(`${S3.publicUrl}/${r.json.filename}`)
   check("…which is served from the public URL", res.status === 200 && Buffer.from(await res.arrayBuffer()).equals(PNG), res.status)
+
+  console.log("\nCORS")
+  r = await api("POST", "/admin/r2/test-connection", { headers: admin, body: { origin: "https://admin.example.test" } })
+  let corsCheck = r.json.checks?.find((c) => c.name === "cors")
+  check("test connection reports a missing CORS policy as a warning, overall still OK", r.status === 200 && r.json.ok === true && corsCheck && corsCheck.ok === false && corsCheck.warning === true && /no CORS policy/.test(corsCheck.detail), r.json)
+  r = await api("POST", "/admin/r2/cors", { headers: admin, body: { origin: "https://admin.example.test/app/settings" } })
+  check("Apply CORS adds a rule for the origin", r.status === 200 && r.json.ok === true && r.json.added === true && r.json.origin === "https://admin.example.test" && r.json.rules === 1, r.json)
+  const corsCfg = await s3.send(new GetBucketCorsCommand({ Bucket: S3.bucket }))
+  check("bucket CORS policy contains the origin with GET/HEAD/PUT", corsCfg.CORSRules?.[0]?.AllowedOrigins?.[0] === "https://admin.example.test" && ["GET", "HEAD", "PUT"].every((m) => corsCfg.CORSRules[0].AllowedMethods.includes(m)), corsCfg.CORSRules)
+  r = await api("POST", "/admin/r2/cors", { headers: admin, body: { origin: "https://admin.example.test" } })
+  check("Apply CORS is idempotent", r.status === 200 && r.json.ok === true && r.json.added === false, r.json)
+  r = await api("POST", "/admin/r2/cors", { headers: admin, body: { origin: "https://second.example.test" } })
+  check("a second origin is appended, the first is kept", r.status === 200 && r.json.added === true && r.json.rules === 2, r.json)
+  r = await api("POST", "/admin/r2/test-connection", { headers: admin, body: { origin: "https://admin.example.test" } })
+  corsCheck = r.json.checks?.find((c) => c.name === "cors")
+  check("test connection now passes the CORS check", corsCheck?.ok === true, r.json)
+  r = await api("POST", "/admin/r2/cors", { headers: admin, body: { origin: "ftp://nope" } })
+  check("bad origin is refused", r.status === 400, r.json)
+
+  console.log("\nChange log and URL template")
+  r = await api("GET", "/admin/r2/settings", { headers: admin })
+  const ev = r.json.events ?? []
+  check("GET settings returns the change log, newest first, with the actor's e-mail", ev.length >= 4 && ev[0].action === "cors.applied" && ev.every((e) => e.actor_email === ADMIN.email) && ev.some((e) => e.action === "settings.saved" && e.fields.includes("access_key_id") && e.fields.includes("secret_access_key") && e.fields.includes("bucket")), ev.slice(0, 5))
+  check("the change log never contains secret values", !JSON.stringify(ev).includes(S3.secret) && !JSON.stringify(ev).includes(S3.key), ev.slice(0, 3))
+  r = await api("POST", "/admin/r2/settings", { headers: admin, body: { public_url_template: "no placeholder" } })
+  check("template without {key} is refused", r.status === 400 && /\{key\}/.test(r.json.message), r.json)
+  r = await api("POST", "/admin/r2/settings", { headers: admin, body: { public_url_template: "{public_url}/cdn-cgi/image/format=auto/{key}" } })
+  check("template saved", r.status === 200 && r.json.settings.public_url_template === "{public_url}/cdn-cgi/image/format=auto/{key}", r.json)
+  await new Promise((resolve) => setTimeout(resolve, 700))
+  r = await api("POST", "/admin/uploads", { headers: admin, raw: multipart([{ name: "t.png", type: "image/png", content: PNG }]) })
+  check("upload URL follows the template", r.status === 200 && r.json.files[0].url.startsWith(`${S3.publicUrl}/cdn-cgi/image/format=auto/medusa/t-`), r.json)
+  r = await api("POST", "/admin/r2/settings", { headers: admin, body: { public_url_template: "" } })
+  check("template cleared", r.status === 200 && r.json.settings.public_url_template === null, r.json)
+  await new Promise((resolve) => setTimeout(resolve, 700))
 
   console.log("\nLive reconfiguration")
   r = await api("POST", "/admin/r2/settings", { headers: admin, body: { prefix: "shop/2026" } })
@@ -374,6 +448,29 @@ async function checks() {
 
   r = await api("POST", "/admin/r2/settings", { headers: admin, body: { access_key_id: S3.key, secret_access_key: S3.secret } })
   check("credentials re-entered", r.json.settings?.configured === true, r.json)
+
+  console.log("\nEncryption key rotation (medusa exec)")
+  const NEW_KEY = "fedcba9876543210".repeat(4)
+  const rotate = (oldKey, newKey) =>
+    spawnSync("node", [GUARD, MEDUSA, "exec", path.join(PLUGIN_DIR, ".medusa/server/src/scripts/rotate-encryption-key.js")], {
+      cwd: APP_DIR,
+      env: { ...env, R2_ENCRYPTION_KEY_OLD: oldKey, R2_ENCRYPTION_KEY: newKey },
+      encoding: "utf8",
+    })
+  let rot = rotate(NEW_KEY, ENCRYPTION_KEY)
+  check("rotation with the wrong old key is refused", rot.status !== 0 && /encrypted with key/.test(rot.stdout + rot.stderr), (rot.stdout + rot.stderr).slice(-300))
+  rot = rotate(ENCRYPTION_KEY, NEW_KEY)
+  check("rotation re-encrypts the credentials with the new key", rot.status === 0 && /re-encrypted with key/.test(rot.stdout + rot.stderr) && !(rot.stdout + rot.stderr).includes(S3.secret), (rot.stdout + rot.stderr).slice(-300))
+  await new Promise((resolve) => setTimeout(resolve, 700))
+  r = await api("GET", "/admin/r2/settings", { headers: admin })
+  check("the running server (old key) now reports a key mismatch and is not configured", r.status === 200 && r.json.settings.encryption.status === "mismatch" && r.json.settings.configured === false, r.json.settings)
+  check("the change log records the rotation without an actor and without key values", r.json.events[0].action === "encryption_key.rotated" && r.json.events[0].actor_email === null && !JSON.stringify(r.json.events[0]).includes(NEW_KEY) && !JSON.stringify(r.json.events[0]).includes(ENCRYPTION_KEY), r.json.events[0])
+  rot = rotate(NEW_KEY, ENCRYPTION_KEY)
+  await new Promise((resolve) => setTimeout(resolve, 700))
+  r = await api("GET", "/admin/r2/settings", { headers: admin })
+  check("rotating back restores the running server", rot.status === 0 && r.json.settings.encryption.status === "ok" && r.json.settings.configured === true, r.json.settings)
+  r = await api("POST", "/admin/uploads", { headers: admin, raw: multipart([{ name: "after-rotation.png", type: "image/png", content: PNG }]) })
+  check("uploads work with the rotated credentials", r.status === 200 && (await fetch(r.json.files[0].url)).status === 200, r.json)
 }
 
 /** R2_E2E_OPTIONS=1: no Admin row, everything from the provider options */

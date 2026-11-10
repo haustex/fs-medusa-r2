@@ -14,11 +14,13 @@ export type PublicSettings = {
   access_key_id_hint: string | null
   bucket: string | null
   public_url: string | null
+  public_url_template: string | null
   prefix: string
   private_bucket: string | null
   cache_control: string
   download_url_ttl: number
   upload_url_ttl: number
+  max_file_size: number | null
   credentials_saved_at: string | null
   encryption: { status: R2Settings["encryption"]["status"]; message: string | null; key_present: boolean }
   /** false when medusa-config.ts has no File Module provider pointing at this package */
@@ -42,11 +44,13 @@ export function toPublicSettings(
     access_key_id_hint: s.accessKeyIdHint,
     bucket: s.bucket,
     public_url: s.publicUrl,
+    public_url_template: s.publicUrlTemplate,
     prefix: s.prefix,
     private_bucket: s.privateBucket,
     cache_control: s.cacheControl,
     download_url_ttl: s.downloadUrlTtl,
     upload_url_ttl: s.uploadUrlTtl,
+    max_file_size: s.maxFileSize,
     credentials_saved_at: s.credentialsSavedAt?.toISOString() ?? null,
     encryption: { ...s.encryption, key_present: loadEncryptionKey().status === "ok" },
     provider_registered: providerRegistered,

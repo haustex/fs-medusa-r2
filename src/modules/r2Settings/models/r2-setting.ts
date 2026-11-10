@@ -23,6 +23,8 @@ const R2Setting = model.define("r2_setting", {
   bucket: model.text().nullable(),
   // Where the bucket is served from: https://pub-xxxx.r2.dev or https://cdn.your-store.com (no trailing slash)
   public_url: model.text().nullable(),
+  // Optional template for public file URLs, e.g. "{public_url}/cdn-cgi/image/format=auto/{key}"; empty = "{public_url}/{key}"
+  public_url_template: model.text().nullable(),
   // Key prefix inside the bucket, e.g. "medusa/" ("" = bucket root)
   prefix: model.text().default(""),
   // Bucket for files Medusa marks private (exports, imports). Empty = same bucket as public files.

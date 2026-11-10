@@ -8,11 +8,19 @@ import { CreditFooter } from "../../../components/credit-footer"
 import { Loading } from "../../../components/states"
 import { r2Keys, useR2Settings } from "../../../lib/api"
 import { sdk } from "../../../lib/client"
-import type { ConnectionTestResult, Jurisdiction, PublicSettings } from "../../../lib/types"
+import type { ConnectionTestResult, CorsResponse, Jurisdiction, PublicSettings, SettingEvent, SettingsResponse } from "../../../lib/types"
 
 const JURISDICTIONS: Jurisdiction[] = ["default", "eu", "fedramp"]
 const ACCOUNT_ID = /^[0-9a-fA-F]{32}$/
 const HTTP_URL = /^https?:\/\/\S+$/i
+const ADMIN_ORIGIN = typeof window !== "undefined" ? window.location.origin : ""
+
+function formatBytes(n: number): string {
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`
+  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`
+  if (n >= 1024) return `${(n / 1024).toFixed(0)} kB`
+  return `${n} B`
+}
 
 const Section = ({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) => (
   <Container className="divide-y p-0">
@@ -37,10 +45,10 @@ const Field = ({ id, label, hint, children }: { id: string; label: string; hint?
 const R2SettingsPage = () => {
   const { data, isLoading } = useR2Settings()
   if (isLoading || !data) return <Loading />
-  return <SettingsForm settings={data.settings} />
+  return <SettingsForm settings={data.settings} events={data.events ?? []} />
 }
 
-const SettingsForm = ({ settings }: { settings: PublicSettings }) => {
+const SettingsForm = ({ settings, events }: { settings: PublicSettings; events: SettingEvent[] }) => {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [accountId, setAccountId] = useState(settings.account_id ?? "")
@@ -51,12 +59,14 @@ const SettingsForm = ({ settings }: { settings: PublicSettings }) => {
   const [clearCredentials, setClearCredentials] = useState(false)
   const [bucket, setBucket] = useState(settings.bucket ?? "")
   const [publicUrl, setPublicUrl] = useState(settings.public_url ?? "")
+  const [publicUrlTemplate, setPublicUrlTemplate] = useState(settings.public_url_template ?? "")
   const [prefix, setPrefix] = useState(settings.prefix.replace(/\/$/, ""))
   const [privateBucket, setPrivateBucket] = useState(settings.private_bucket ?? "")
   const [cacheControl, setCacheControl] = useState(settings.cache_control)
   const [downloadTtl, setDownloadTtl] = useState(String(settings.download_url_ttl))
   const [uploadTtl, setUploadTtl] = useState(String(settings.upload_url_ttl))
   const [test, setTest] = useState<ConnectionTestResult | null>(null)
+  const [cors, setCors] = useState<CorsResponse | null>(null)
 
   useEffect(() => {
     setAccountId(settings.account_id ?? "")
@@ -64,6 +74,7 @@ const SettingsForm = ({ settings }: { settings: PublicSettings }) => {
     setEndpoint(settings.endpoint_is_custom ? (settings.endpoint ?? "") : "")
     setBucket(settings.bucket ?? "")
     setPublicUrl(settings.public_url ?? "")
+    setPublicUrlTemplate(settings.public_url_template ?? "")
     setPrefix(settings.prefix.replace(/\/$/, ""))
     setPrivateBucket(settings.private_bucket ?? "")
     setCacheControl(settings.cache_control)
@@ -81,6 +92,7 @@ const SettingsForm = ({ settings }: { settings: PublicSettings }) => {
     (!accountId.trim() || ACCOUNT_ID.test(accountId.trim())) &&
     (!endpoint.trim() || HTTP_URL.test(endpoint.trim())) &&
     (!publicUrl.trim() || HTTP_URL.test(publicUrl.trim())) &&
+    (!publicUrlTemplate.trim() || publicUrlTemplate.includes("{key}")) &&
     (!typedCredentials || credentialsComplete) &&
     (!typedCredentials || settings.encryption.key_present) &&
     ttlOk(downloadTtlNum) &&
@@ -102,10 +114,11 @@ const SettingsForm = ({ settings }: { settings: PublicSettings }) => {
 
   const save = useMutation({
     mutationFn: () =>
-      sdk.client.fetch<{ settings: PublicSettings }>("/admin/r2/settings", {
+      sdk.client.fetch<SettingsResponse>("/admin/r2/settings", {
         method: "POST",
         body: {
           ...overrides(),
+          public_url_template: publicUrlTemplate.trim(),
           ...(credentialsComplete
             ? { access_key_id: accessKeyId.trim(), secret_access_key: secret.trim() }
             : clearCredentials
@@ -132,10 +145,23 @@ const SettingsForm = ({ settings }: { settings: PublicSettings }) => {
         method: "POST",
         body: {
           ...overrides(),
+          origin: ADMIN_ORIGIN || undefined,
           ...(credentialsComplete ? { access_key_id: accessKeyId.trim(), secret_access_key: secret.trim() } : {}),
         },
       }),
     onSuccess: setTest,
+    onError: (e) => toast.error((e as Error).message),
+  })
+
+  const applyCors = useMutation({
+    mutationFn: () => sdk.client.fetch<CorsResponse>("/admin/r2/cors", { method: "POST", body: { origin: ADMIN_ORIGIN } }),
+    onSuccess: (r) => {
+      setCors(r)
+      if (r.ok) {
+        queryClient.invalidateQueries({ queryKey: r2Keys.settings })
+        toast.success(r.added ? t("r2.settings.cors_applied", { origin: r.origin, rules: r.rules }) : t("r2.settings.cors_already", { origin: r.origin }))
+      }
+    },
     onError: (e) => toast.error((e as Error).message),
   })
 
@@ -184,7 +210,13 @@ const SettingsForm = ({ settings }: { settings: PublicSettings }) => {
             <ul className="flex flex-col gap-y-0.5">
               {test.checks.map((c) => (
                 <li key={c.name} className="flex items-start gap-x-2">
-                  {c.ok ? <CheckCircle className="mt-0.5 shrink-0 text-ui-fg-interactive" /> : <XCircle className="mt-0.5 shrink-0 text-ui-fg-error" />}
+                  {c.ok ? (
+                    <CheckCircle className="mt-0.5 shrink-0 text-ui-fg-interactive" />
+                  ) : c.warning ? (
+                    <ExclamationCircle className="mt-0.5 shrink-0 text-ui-fg-warning" />
+                  ) : (
+                    <XCircle className="mt-0.5 shrink-0 text-ui-fg-error" />
+                  )}
                   <Text size="small">
                     {t(`r2.settings.checks.${c.name}`)}
                     {c.detail && <span className="text-ui-fg-subtle"> — {c.detail}</span>}
@@ -257,6 +289,9 @@ const SettingsForm = ({ settings }: { settings: PublicSettings }) => {
         <Field id="r2-public-url" label={t("r2.settings.public_url")} hint={t("r2.settings.public_url_hint")}>
           <Input id="r2-public-url" value={publicUrl} onChange={(e) => setPublicUrl(e.target.value)} className="font-mono" placeholder="https://pub-xxxxxxxx.r2.dev" autoComplete="off" />
         </Field>
+        <Field id="r2-public-url-template" label={t("r2.settings.public_url_template")} hint={t("r2.settings.public_url_template_hint")}>
+          <Input id="r2-public-url-template" value={publicUrlTemplate} onChange={(e) => setPublicUrlTemplate(e.target.value)} className="font-mono" placeholder="{public_url}/{key}" autoComplete="off" />
+        </Field>
         <Field id="r2-prefix" label={t("r2.settings.prefix")} hint={t("r2.settings.prefix_hint")}>
           <Input id="r2-prefix" value={prefix} onChange={(e) => setPrefix(e.target.value)} className="w-64 font-mono" placeholder="medusa" autoComplete="off" />
         </Field>
@@ -275,6 +310,57 @@ const SettingsForm = ({ settings }: { settings: PublicSettings }) => {
         <Field id="r2-upload-ttl" label={t("r2.settings.upload_url_ttl")} hint={t("r2.settings.upload_url_ttl_hint")}>
           <Input id="r2-upload-ttl" type="number" min={60} max={604800} step={1} value={uploadTtl} onChange={(e) => setUploadTtl(e.target.value)} className="w-40" />
         </Field>
+        <Field id="r2-max-size" label={t("r2.settings.max_file_size")} hint={t("r2.settings.max_file_size_hint")}>
+          <Text size="small" className="font-mono">{settings.max_file_size ? formatBytes(settings.max_file_size) : t("r2.settings.no_limit")}</Text>
+        </Field>
+      </Section>
+
+      <Section title={t("r2.settings.cors")} hint={t("r2.settings.cors_hint")}>
+        <div className="flex flex-col gap-y-3">
+          <div>
+            <Button size="small" variant="secondary" onClick={() => applyCors.mutate()} isLoading={applyCors.isPending} disabled={!settings.configured || !ADMIN_ORIGIN || applyCors.isPending}>
+              {applyCors.isPending ? t("r2.settings.applying_cors") : t("r2.settings.apply_cors", { origin: ADMIN_ORIGIN })}
+            </Button>
+          </div>
+          {cors && !cors.ok && (
+            <Alert variant="warning" dismissible>
+              <div className="flex flex-col gap-y-2">
+                <Text size="small">{cors.message}</Text>
+                <Text size="xsmall" className="text-ui-fg-subtle">{t("r2.settings.cors_manual")}</Text>
+                <pre className="txt-compact-small overflow-x-auto rounded-md bg-ui-bg-subtle p-3 font-mono">{cors.policy_json}</pre>
+                <div>
+                  <Button size="small" variant="secondary" onClick={() => navigator.clipboard.writeText(cors.policy_json).then(() => toast.success(t("r2.settings.copied")))}>
+                    {t("r2.settings.copy")}
+                  </Button>
+                </div>
+              </div>
+            </Alert>
+          )}
+        </div>
+      </Section>
+
+      <Section title={t("r2.settings.history")} hint={t("r2.settings.history_hint")}>
+        {events.length === 0 ? (
+          <Text size="small" className="text-ui-fg-subtle">{t("r2.settings.history_empty")}</Text>
+        ) : (
+          <ul className="flex flex-col divide-y">
+            {events.map((e) => (
+              <li key={e.id} className="flex flex-col gap-y-0.5 py-2 first:pt-0 last:pb-0">
+                <div className="flex flex-wrap items-center gap-x-2">
+                  <Text size="small" weight="plus">{t(`r2.settings.actions.${e.action}`, { defaultValue: e.action })}</Text>
+                  <Text size="xsmall" className="text-ui-fg-subtle">
+                    {new Date(e.created_at).toLocaleString()} · {e.actor_email ?? t("r2.settings.history_system")}
+                  </Text>
+                </div>
+                {(e.fields.length > 0 || e.detail) && (
+                  <Text size="xsmall" className="font-mono text-ui-fg-muted">
+                    {[e.fields.join(", "), e.detail].filter(Boolean).join(" — ")}
+                  </Text>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </Section>
 
       <CreditFooter showCredit={settings.show_credit} />

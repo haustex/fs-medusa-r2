@@ -6,17 +6,20 @@ import {
   type S3Client,
 } from "@aws-sdk/client-s3"
 import { ulid } from "ulid"
+import { checkCors } from "./cors"
 import { encodeKeyForUrl } from "./file-key"
 import { createR2Client } from "./r2-client"
 import type { R2Settings } from "./settings"
 
-export type CheckName = "bucket" | "write" | "read" | "public_url" | "private_bucket" | "delete"
+export type CheckName = "bucket" | "write" | "read" | "public_url" | "private_bucket" | "cors" | "delete"
 
 export type Check = {
   name: CheckName
   ok: boolean
   /** short, never contains credentials */
   detail: string | null
+  /** a failed check that does not make the connection unusable (CORS is only needed for browser uploads) */
+  warning?: boolean
 }
 
 export type ConnectionTestResult = {
@@ -45,12 +48,12 @@ function describeError(e: unknown): string {
  */
 export async function testConnection(
   settings: R2Settings,
-  { fetchImpl = fetch }: { fetchImpl?: typeof fetch } = {}
+  { fetchImpl = fetch, origin = null }: { fetchImpl?: typeof fetch; origin?: string | null } = {}
 ): Promise<ConnectionTestResult> {
   const started = Date.now()
   const checks: Check[] = []
   const done = (): ConnectionTestResult => ({
-    ok: checks.every((c) => c.ok),
+    ok: checks.every((c) => c.ok || c.warning),
     latency_ms: Date.now() - started,
     endpoint: settings.endpoint,
     bucket: settings.bucket,
@@ -125,6 +128,28 @@ export async function testConnection(
       checks.push({ name: "private_bucket", ok: true, detail: null })
     } catch (e) {
       checks.push({ name: "private_bucket", ok: false, detail: describeError(e) })
+    }
+  }
+
+  if (origin) {
+    const cors = await checkCors(client, bucket, origin)
+    switch (cors.state) {
+      case "allowed":
+        checks.push({ name: "cors", ok: true, detail: `${origin} may upload from the browser` })
+        break
+      case "none":
+        checks.push({ name: "cors", ok: false, warning: true, detail: `no CORS policy; browser uploads from ${origin} would fail` })
+        break
+      case "missing":
+        checks.push({
+          name: "cors",
+          ok: false,
+          warning: true,
+          detail: `${origin} is not allowed to ${cors.missingMethods.join("/")} (${cors.rules} rule(s) present)`,
+        })
+        break
+      default:
+        checks.push({ name: "cors", ok: false, warning: true, detail: cors.detail })
     }
   }
 

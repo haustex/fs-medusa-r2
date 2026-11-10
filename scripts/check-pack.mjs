@@ -18,6 +18,7 @@ const REQUIRED = [
   ".medusa/server/src/providers/r2/index.js",
   ".medusa/server/src/modules/r2Settings/index.js",
   ".medusa/server/src/modules/r2Settings/migrations/Migration20261110020623.js",
+  ".medusa/server/src/modules/r2Settings/migrations/Migration20261110035035.js",
   ".medusa/server/src/admin/index.js",
   ".medusa/server/src/admin/index.mjs",
   ".medusa/server/src/api/middlewares.js",

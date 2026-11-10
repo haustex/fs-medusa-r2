@@ -41,7 +41,12 @@ export const ENCRYPTION_KEY_INVALID_MESSAGE =
   "R2_ENCRYPTION_KEY is missing, malformed or not the key the credentials were saved with. Re-enter the access key and secret in Settings → Cloudflare R2."
 
 export const DEFAULT_CACHE_CONTROL = "public, max-age=31536000, immutable"
+/** Files Medusa marks private (exports, imports): never cached by a shared cache. */
+export const PRIVATE_CACHE_CONTROL = "private, no-store"
 export const DEFAULT_URL_TTL = 3600
+export const DEFAULT_MAX_ATTEMPTS = 4
+export const DEFAULT_CONNECTION_TIMEOUT_MS = 5_000
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 
 /** Options of the provider entry in `medusa-config.ts`; every field optional, the Admin settings take precedence. */
 export type R2ProviderOptions = {
@@ -54,6 +59,8 @@ export type R2ProviderOptions = {
   bucket?: string
   /** https://pub-xxx.r2.dev or https://cdn.your-store.com */
   public_url?: string
+  /** Template for public URLs with {public_url} and {key}; default "{public_url}/{key}" */
+  public_url_template?: string
   prefix?: string
   private_bucket?: string
   cache_control?: string
@@ -61,6 +68,14 @@ export type R2ProviderOptions = {
   upload_url_ttl?: number
   /** How long resolved settings are cached in this process. Default 60000. */
   settings_cache_ttl_ms?: number
+  /** Largest file accepted, in bytes. Default: no limit. */
+  max_file_size?: number
+  /** S3 requests: attempts for 5xx / 429 / network errors (4xx are never retried). Default 4. */
+  max_attempts?: number
+  /** Default 5000. */
+  connection_timeout_ms?: number
+  /** Default 30000. */
+  request_timeout_ms?: number
 }
 
 export type R2Settings = {
@@ -80,12 +95,18 @@ export type R2Settings = {
   bucket: string | null
   /** No trailing slash; null = files get no public URL (presigned download URLs only) */
   publicUrl: string | null
+  /** null = "{public_url}/{key}" */
+  publicUrlTemplate: string | null
   /** "" or "folder/" (always a trailing slash when set) */
   prefix: string
   privateBucket: string | null
   cacheControl: string
   downloadUrlTtl: number
   uploadUrlTtl: number
+  maxFileSize: number | null
+  maxAttempts: number
+  connectionTimeoutMs: number
+  requestTimeoutMs: number
   credentialsSavedAt: Date | null
   encryption: { status: EncryptionStatus; message: string | null }
   /** true when the Admin row holds credentials that could not be decrypted */
@@ -102,6 +123,7 @@ type StoredSettingRow = {
   encryption_key_fingerprint: string | null
   bucket: string | null
   public_url: string | null
+  public_url_template?: string | null
   prefix: string | null
   private_bucket: string | null
   cache_control: string | null
@@ -231,11 +253,16 @@ export async function resolveR2Settings(
       source === "admin" ? (row?.access_key_id_hint ?? null) : accessKeyId ? accessKeyIdHint(accessKeyId) : null,
     bucket,
     publicUrl: normalizePublicUrl(pick(row?.public_url, options.public_url, "R2_PUBLIC_URL")),
+    publicUrlTemplate: pick(row?.public_url_template, options.public_url_template, "R2_PUBLIC_URL_TEMPLATE"),
     prefix: normalizePrefix(pick(row?.prefix, options.prefix, "R2_PREFIX")),
     privateBucket: pick(row?.private_bucket, options.private_bucket, "R2_PRIVATE_BUCKET"),
     cacheControl: pick(row?.cache_control, options.cache_control, "R2_CACHE_CONTROL") ?? DEFAULT_CACHE_CONTROL,
     downloadUrlTtl: positiveInt(row?.download_url_ttl ?? options.download_url_ttl, DEFAULT_URL_TTL),
     uploadUrlTtl: positiveInt(row?.upload_url_ttl ?? options.upload_url_ttl, DEFAULT_URL_TTL),
+    maxFileSize: options.max_file_size && options.max_file_size > 0 ? Math.floor(options.max_file_size) : null,
+    maxAttempts: positiveInt(options.max_attempts, DEFAULT_MAX_ATTEMPTS),
+    connectionTimeoutMs: positiveInt(options.connection_timeout_ms, DEFAULT_CONNECTION_TIMEOUT_MS),
+    requestTimeoutMs: positiveInt(options.request_timeout_ms, DEFAULT_REQUEST_TIMEOUT_MS),
     credentialsSavedAt: toDateOrNull(row?.credentials_saved_at),
     encryption: {
       status: admin.status,
@@ -263,6 +290,7 @@ const COLUMNS = [
   "encryption_key_fingerprint",
   "bucket",
   "public_url",
+  "public_url_template",
   "prefix",
   "private_bucket",
   "cache_control",
@@ -270,6 +298,8 @@ const COLUMNS = [
   "upload_url_ttl",
   "credentials_saved_at",
 ] as const
+
+const ADDED_IN_0_2: ReadonlySet<string> = new Set(["public_url_template"])
 
 async function lookupAdmin(
   pg: Knex | undefined,
@@ -293,12 +323,16 @@ async function readAdminSettings(pg: Knex | undefined, logger?: Logger): Promise
   }
 
   let row: StoredSettingRow | undefined
+  const read = (columns: readonly string[]) =>
+    pg<StoredSettingRow>(R2_SETTINGS_TABLE).select(...columns).whereNull("deleted_at").orderBy("updated_at", "desc").first()
   try {
-    row = await pg<StoredSettingRow>(R2_SETTINGS_TABLE)
-      .select(...COLUMNS)
-      .whereNull("deleted_at")
-      .orderBy("updated_at", "desc")
-      .first()
+    try {
+      row = await read(COLUMNS)
+    } catch {
+      // 0.1.x table without the 0.2.0 columns: keep working, ask for the migration
+      row = await read(COLUMNS.filter((c) => !ADDED_IN_0_2.has(c)))
+      logger?.warn("[r2] r2_setting has no 0.2.0 columns yet; run `npx medusa db:migrate`.")
+    }
   } catch (e) {
     // Most likely migrations have not been run yet.
     logger?.warn(

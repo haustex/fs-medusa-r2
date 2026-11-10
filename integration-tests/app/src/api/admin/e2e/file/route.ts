@@ -28,3 +28,20 @@ export async function DELETE(req: AuthenticatedMedusaRequest, res: MedusaRespons
   await files.deleteFiles(String(req.query.key))
   res.json({ ok: true })
 }
+
+/** Streams the raw request body into the provider (multipart upload, no content-length needed). */
+export async function PUT(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
+  const files: IFileModuleService = req.scope.resolve(Modules.FILE)
+  const filename = String(req.query.filename)
+  const mimeType = req.query.mimeType ? String(req.query.mimeType) : undefined
+  const access = (req.query.access as "public" | "private" | undefined) ?? "public"
+  const { writeStream, promise, fileKey } = await files.getUploadStream({ filename, mimeType, access })
+  req.pipe(writeStream)
+  try {
+    const file = await promise
+    res.json({ file, fileKey })
+  } catch (e) {
+    const err = e as { type?: string; message?: string }
+    res.status(400).json({ type: err.type, message: err.message })
+  }
+}

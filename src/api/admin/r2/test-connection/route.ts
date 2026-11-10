@@ -1,6 +1,7 @@
 import type { AuthenticatedMedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
 import { testConnection } from "../../../../lib/connection-test"
+import { normalizeOrigin } from "../../../../lib/cors"
 import { getProviderOptions } from "../../../../lib/plugin-options"
 import {
   normalizePrefix,
@@ -23,8 +24,10 @@ export async function POST(req: AuthenticatedMedusaRequest<PostAdminR2TestConnec
     fresh: true,
     logger: req.scope.resolve(ContainerRegistrationKeys.LOGGER),
   })
-  const settings = applyOverrides(stored, req.validatedBody)
-  res.json(await testConnection(settings))
+  const { origin: typedOrigin, ...overrides } = req.validatedBody
+  const settings = applyOverrides(stored, overrides)
+  const origin = normalizeOrigin(typedOrigin ?? req.get("origin") ?? "")
+  res.json(await testConnection(settings, { origin }))
 }
 
 /** undefined = field not sent (keep stored); null = sent empty (clear) */

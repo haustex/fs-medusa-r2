@@ -1,6 +1,8 @@
 {
   "r2": {
-    "footer": { "help": "Bantuan" },
+    "footer": {
+      "help": "Bantuan"
+    },
     "settings": {
       "title": "Cloudflare R2",
       "description": "Tempat Medusa menyimpan file yang diunggah: foto produk, file impor/ekspor, semua yang lewat File Module.",
@@ -11,7 +13,12 @@
       "not_set": "belum diisi",
       "current": "Saat ini: {{value}}",
       "source": "Sumber: {{source}}",
-      "sources": { "admin": "disimpan di sini", "options": "medusa-config.ts", "env": "environment variable", "none": "tidak ada" },
+      "sources": {
+        "admin": "disimpan di sini",
+        "options": "medusa-config.ts",
+        "env": "environment variable",
+        "none": "tidak ada"
+      },
       "status": {
         "configured": "Terkonfigurasi",
         "not_configured": "Belum terkonfigurasi",
@@ -23,7 +30,11 @@
       "account_id_hint": "Dashboard Cloudflare → R2 → Overview, kolom kanan. 32 karakter heksadesimal.",
       "jurisdiction": "Yurisdiksi",
       "jurisdiction_hint": "Hanya kalau bucket dibuat dengan yurisdiksi (EU atau FedRAMP).",
-      "jurisdictions": { "default": "Default (global)", "eu": "Uni Eropa", "fedramp": "FedRAMP" },
+      "jurisdictions": {
+        "default": "Default (global)",
+        "eu": "Uni Eropa",
+        "fedramp": "FedRAMP"
+      },
       "endpoint": "Endpoint S3",
       "endpoint_hint": "Diturunkan dari Account ID. Isi hanya untuk penyimpanan S3-compatible lain (MinIO, …).",
       "endpoint_derived": "Turunan: {{endpoint}}",
@@ -65,7 +76,32 @@
         "read": "Baca ulang objek",
         "public_url": "URL publik melayani file",
         "private_bucket": "Bucket privat terjangkau",
-        "delete": "Hapus objek"
+        "delete": "Hapus objek",
+        "cors": "Unggah dari browser diizinkan (CORS)"
+      },
+      "public_url_template": "Template URL publik",
+      "public_url_template_hint": "Opsional. Mengubah URL file publik, mis. {public_url}/cdn-cgi/image/format=auto,quality=85/{key} untuk Cloudflare Image Transformations di domain sendiri. Kosong: {public_url}/{key}.",
+      "max_file_size": "Ukuran file maksimum",
+      "max_file_size_hint": "Diatur lewat opsi provider max_file_size (byte). Kosong: tanpa batas.",
+      "no_limit": "tanpa batas",
+      "cors": "Unggah dari browser (CORS)",
+      "cors_hint": "Hanya perlu kalau file diunggah dari browser langsung ke R2 (tautan unggah presigned). Menambahkan aturan untuk origin Admin ini ke kebijakan CORS bucket; aturan lama dipertahankan. Token butuh izin Admin Read & Write.",
+      "apply_cors": "Terapkan CORS untuk {{origin}}",
+      "applying_cors": "Menerapkan…",
+      "cors_applied": "Aturan CORS ditambahkan untuk {{origin}} ({{rules}} aturan di bucket).",
+      "cors_already": "{{origin}} sudah diizinkan; tidak ada yang berubah.",
+      "cors_manual": "Tempel kebijakan ini di Cloudflare → R2 → bucket → Settings → CORS policy:",
+      "copy": "Salin",
+      "copied": "Tersalin.",
+      "history": "Riwayat perubahan",
+      "history_hint": "Siapa mengubah field apa, dan kapan. Nilainya tidak pernah dicatat.",
+      "history_empty": "Belum ada perubahan tercatat.",
+      "history_system": "sistem (medusa exec)",
+      "actions": {
+        "settings.saved": "Pengaturan disimpan",
+        "credentials.removed": "Kredensial dihapus",
+        "cors.applied": "Aturan CORS diterapkan",
+        "encryption_key.rotated": "Kunci enkripsi dirotasi"
       }
     }
   }

@@ -1,13 +1,24 @@
 import { S3Client } from "@aws-sdk/client-s3"
+import { NodeHttpHandler } from "@smithy/node-http-handler"
 import { MedusaError } from "@medusajs/framework/utils"
-import type { R2Settings } from "./settings"
+import {
+  DEFAULT_CONNECTION_TIMEOUT_MS,
+  DEFAULT_MAX_ATTEMPTS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  type R2Settings,
+} from "./settings"
+
+type ClientSettings = Pick<R2Settings, "endpoint" | "accessKeyId" | "secretAccessKey"> &
+  Partial<Pick<R2Settings, "maxAttempts" | "connectionTimeoutMs" | "requestTimeoutMs">>
 
 /**
  * One S3Client per distinct (endpoint, key, secret). R2 only knows the region
  * "auto". The checksum options keep the SDK from adding CRC32 trailers on
  * every PutObject, which R2 and other S3-compatible stores reject or ignore.
+ * Retries: the SDK's adaptive mode retries throttling (429), 5xx and network
+ * errors with backoff and never retries other 4xx; timeouts bound each attempt.
  */
-export function createR2Client(settings: Pick<R2Settings, "endpoint" | "accessKeyId" | "secretAccessKey">): S3Client {
+export function createR2Client(settings: ClientSettings): S3Client {
   if (!settings.endpoint || !settings.accessKeyId || !settings.secretAccessKey) {
     throw new MedusaError(MedusaError.Types.INVALID_DATA, "createR2Client: endpoint and credentials are required")
   }
@@ -19,9 +30,15 @@ export function createR2Client(settings: Pick<R2Settings, "endpoint" | "accessKe
     credentials: { accessKeyId: settings.accessKeyId, secretAccessKey: settings.secretAccessKey },
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
+    maxAttempts: settings.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
+    retryMode: "adaptive",
+    requestHandler: new NodeHttpHandler({
+      connectionTimeout: settings.connectionTimeoutMs ?? DEFAULT_CONNECTION_TIMEOUT_MS,
+      requestTimeout: settings.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+    }),
   })
 }
 
-export function clientCacheKey(settings: Pick<R2Settings, "endpoint" | "accessKeyId" | "secretAccessKey">): string {
-  return `${settings.endpoint}\u0000${settings.accessKeyId}\u0000${settings.secretAccessKey}`
+export function clientCacheKey(settings: ClientSettings): string {
+  return [settings.endpoint, settings.accessKeyId, settings.secretAccessKey, settings.maxAttempts, settings.connectionTimeoutMs, settings.requestTimeoutMs].join("\u0000")
 }

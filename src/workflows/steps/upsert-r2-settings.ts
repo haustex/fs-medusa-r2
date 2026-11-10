@@ -22,11 +22,15 @@ export type UpsertR2SettingsInput = {
   secret_access_key?: string | null
   bucket?: string | null
   public_url?: string | null
+  /** undefined keeps, null / "" removes; must contain {key} */
+  public_url_template?: string | null
   prefix?: string | null
   private_bucket?: string | null
   cache_control?: string | null
   download_url_ttl?: number
   upload_url_ttl?: number
+  /** Who saves (for the change log); values are never logged */
+  actor?: { id: string | null; email: string | null }
 }
 
 type StoredSetting = Awaited<ReturnType<R2SettingsModuleService["listR2Settings"]>>[number]
@@ -74,6 +78,13 @@ export const upsertR2SettingsStep = createStep(
       }
       data.public_url = url
     }
+    if (input.public_url_template !== undefined) {
+      const t = textOrNull(input.public_url_template)
+      if (t && !t.includes("{key}")) {
+        throw new MedusaError(MedusaError.Types.INVALID_DATA, "The public URL template must contain {key}, e.g. {public_url}/cdn-cgi/image/format=auto/{key}")
+      }
+      data.public_url_template = t
+    }
     if (input.prefix !== undefined) data.prefix = normalizePrefix(input.prefix)
     if (input.cache_control !== undefined) data.cache_control = textOrNull(input.cache_control) ?? "public, max-age=31536000, immutable"
     if (input.download_url_ttl !== undefined) data.download_url_ttl = input.download_url_ttl
@@ -111,6 +122,20 @@ export const upsertR2SettingsStep = createStep(
     const saved = current
       ? await service.updateR2Settings({ id: current.id, ...data })
       : await service.createR2Settings(data)
+
+    // Change log: field names only. Credentials appear as the two field names.
+    const fields = Object.keys(data).filter((k) => !/_encrypted$|_hint$|fingerprint|credentials_saved_at/.test(k))
+    if (writesCredentials) fields.push("access_key_id", "secret_access_key")
+    const removedCredentials = !writesCredentials && (input.access_key_id === null || input.secret_access_key === null)
+    if (fields.length || removedCredentials) {
+      await service.createR2SettingEvents({
+        action: removedCredentials ? "credentials.removed" : "settings.saved",
+        actor_id: input.actor?.id ?? null,
+        actor_email: input.actor?.email ?? null,
+        fields: { names: removedCredentials ? ["access_key_id", "secret_access_key", ...fields] : fields },
+        detail: null,
+      })
+    }
 
     invalidateR2SettingsCache()
     return new StepResponse({ id: saved.id }, { previous: current ?? null, id: saved.id })

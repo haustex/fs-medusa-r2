@@ -1,6 +1,8 @@
 {
   "r2": {
-    "footer": { "help": "Help" },
+    "footer": {
+      "help": "Help"
+    },
     "settings": {
       "title": "Cloudflare R2",
       "description": "Where Medusa stores uploaded files: product images, import/export files, anything that goes through the File Module.",
@@ -11,7 +13,12 @@
       "not_set": "not set",
       "current": "Current: {{value}}",
       "source": "Source: {{source}}",
-      "sources": { "admin": "saved here", "options": "medusa-config.ts", "env": "environment variables", "none": "none" },
+      "sources": {
+        "admin": "saved here",
+        "options": "medusa-config.ts",
+        "env": "environment variables",
+        "none": "none"
+      },
       "status": {
         "configured": "Configured",
         "not_configured": "Not configured",
@@ -23,7 +30,11 @@
       "account_id_hint": "Cloudflare dashboard → R2 → Overview, right-hand column. 32 hex characters.",
       "jurisdiction": "Jurisdiction",
       "jurisdiction_hint": "Only when the bucket was created with a jurisdiction (EU or FedRAMP).",
-      "jurisdictions": { "default": "Default (global)", "eu": "European Union", "fedramp": "FedRAMP" },
+      "jurisdictions": {
+        "default": "Default (global)",
+        "eu": "European Union",
+        "fedramp": "FedRAMP"
+      },
       "endpoint": "S3 endpoint",
       "endpoint_hint": "Derived from the account ID. Fill in only for another S3-compatible store (MinIO, …).",
       "endpoint_derived": "Derived: {{endpoint}}",
@@ -65,7 +76,32 @@
         "read": "Read object back",
         "public_url": "Public URL serves the file",
         "private_bucket": "Private bucket reachable",
-        "delete": "Delete object"
+        "delete": "Delete object",
+        "cors": "Browser uploads allowed (CORS)"
+      },
+      "public_url_template": "Public URL template",
+      "public_url_template_hint": "Optional. Rewrites public file URLs, e.g. {public_url}/cdn-cgi/image/format=auto,quality=85/{key} for Cloudflare Image Transformations on a custom domain. Empty: {public_url}/{key}.",
+      "max_file_size": "Max file size",
+      "max_file_size_hint": "Set with the max_file_size provider option (bytes). Empty: no limit.",
+      "no_limit": "no limit",
+      "cors": "Browser uploads (CORS)",
+      "cors_hint": "Only needed when files are uploaded from the browser straight to R2 (presigned upload links). Adds a rule for this Admin's origin to the bucket's CORS policy; existing rules are kept. The token needs Admin Read & Write for this.",
+      "apply_cors": "Apply CORS for {{origin}}",
+      "applying_cors": "Applying…",
+      "cors_applied": "CORS rule added for {{origin}} ({{rules}} rule(s) on the bucket).",
+      "cors_already": "{{origin}} was already allowed; nothing changed.",
+      "cors_manual": "Paste this policy in Cloudflare → R2 → bucket → Settings → CORS policy:",
+      "copy": "Copy",
+      "copied": "Copied.",
+      "history": "Change log",
+      "history_hint": "Who changed which fields, and when. Values are never recorded.",
+      "history_empty": "No changes recorded yet.",
+      "history_system": "system (medusa exec)",
+      "actions": {
+        "settings.saved": "Settings saved",
+        "credentials.removed": "Credentials removed",
+        "cors.applied": "CORS rule applied",
+        "encryption_key.rotated": "Encryption key rotated"
       }
     }
   }
