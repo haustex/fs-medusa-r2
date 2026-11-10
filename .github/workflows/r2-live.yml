@@ -1,0 +1,85 @@
+name: R2 live
+
+# The E2E suite against a real Cloudflare R2 bucket (Postgres and the Medusa app still run on the runner).
+# Credentials live in the GitHub Environment "r2-live" (Settings → Environments → r2-live):
+#   secrets   R2_LIVE_ACCESS_KEY_ID, R2_LIVE_SECRET_ACCESS_KEY   (API token: Object Read & Write, this bucket only)
+#   variables R2_LIVE_ACCOUNT_ID, R2_LIVE_BUCKET, R2_LIVE_PUBLIC_URL (the bucket's r2.dev URL)
+#             optional R2_LIVE_PRIVATE_BUCKET, R2_LIVE_JURISDICTION (eu | fedramp)
+# Without the secrets the job ends as "skipped", not failed. See README → Testing against real R2.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1" # Mondays 03:17 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r2-live
+  cancel-in-progress: false
+
+jobs:
+  live:
+    name: E2E against Cloudflare R2
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: r2-live
+    env:
+      R2_LIVE_ACCESS_KEY_ID: ${{ secrets.R2_LIVE_ACCESS_KEY_ID }}
+      R2_LIVE_SECRET_ACCESS_KEY: ${{ secrets.R2_LIVE_SECRET_ACCESS_KEY }}
+      R2_LIVE_ACCOUNT_ID: ${{ vars.R2_LIVE_ACCOUNT_ID }}
+      R2_LIVE_BUCKET: ${{ vars.R2_LIVE_BUCKET }}
+      R2_LIVE_PUBLIC_URL: ${{ vars.R2_LIVE_PUBLIC_URL }}
+      R2_LIVE_PRIVATE_BUCKET: ${{ vars.R2_LIVE_PRIVATE_BUCKET }}
+      R2_LIVE_JURISDICTION: ${{ vars.R2_LIVE_JURISDICTION }}
+    steps:
+      - name: Are the R2 credentials configured?
+        id: creds
+        run: |
+          if [ -z "$R2_LIVE_ACCESS_KEY_ID" ] || [ -z "$R2_LIVE_SECRET_ACCESS_KEY" ] || [ -z "$R2_LIVE_ACCOUNT_ID" ] || [ -z "$R2_LIVE_BUCKET" ] || [ -z "$R2_LIVE_PUBLIC_URL" ]; then
+            echo "::notice::R2 live test skipped: fill the r2-live environment (secrets R2_LIVE_ACCESS_KEY_ID / R2_LIVE_SECRET_ACCESS_KEY, variables R2_LIVE_ACCOUNT_ID / R2_LIVE_BUCKET / R2_LIVE_PUBLIC_URL)."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.creds.outputs.configured == 'true'
+        uses: actions/checkout@v5
+
+      - if: steps.creds.outputs.configured == 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - if: steps.creds.outputs.configured == 'true'
+        run: npm ci --no-audit --no-fund
+
+      - if: steps.creds.outputs.configured == 'true'
+        run: npm run build
+
+      - name: Start Postgres
+        if: steps.creds.outputs.configured == 'true'
+        run: |
+          docker run -d --name r2-spike-pg -e POSTGRES_PASSWORD=spike -e POSTGRES_DB=r2_spike \
+            --health-cmd "pg_isready -h 127.0.0.1 -U postgres" --health-interval 1s --health-timeout 5s --health-retries 60 \
+            -p 127.0.0.1:55435:5432 postgres:17-alpine
+          for _ in $(seq 1 60); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' r2-spike-pg)" = healthy ] && exit 0
+            sleep 1
+          done
+          echo "::error::Postgres container r2-spike-pg not healthy after 60 s"
+          exit 1
+
+      - name: E2E against R2
+        if: steps.creds.outputs.configured == 'true'
+        run: R2_E2E_LIVE=1 node integration-tests/e2e.mjs
+
+      - name: Logs
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: r2-live-logs
+          path: integration-tests/.state
+          retention-days: 7
