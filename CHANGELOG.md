@@ -7,6 +7,10 @@ All notable changes to `medusa-storage-r2`. The format follows
 
 ## [0.2.0] - 2026-11-10
 
+Verified against live Cloudflare R2 (workflow "R2 live": the full E2E suite — uploads, 12 MB multipart stream,
+unicode names, presigned URLs, private-file rejection, migration — against a real bucket with an Object Read & Write
+token scoped to that bucket) in addition to the RustFS matrix on Medusa 2.19.0 and 2.22.2.
+
 ### Changed (behaviour)
 
 - **Private files are rejected when no private bucket is set.** 0.1 stored them in the public bucket with a
