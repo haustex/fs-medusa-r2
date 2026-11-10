@@ -290,6 +290,9 @@ async function api(method, url, { body, headers = {}, raw } = {}) {
   return { status: res.status, json, headers: res.headers }
 }
 
+/** What the Admin shows for the access key ID: •••• + last 4, or only •••• for keys shorter than 12 (src/lib/mask.ts) */
+const expectedHint = (key) => (key.length < 12 ? "••••" : `••••${key.slice(-4)}`)
+
 /** Every object key a response mentions, so a live run can clean up without listing the bucket. */
 const written = new Set()
 function rememberKeys(json) {
@@ -443,7 +446,7 @@ async function checks() {
     },
   })
   const st = r.json.settings
-  check("settings saved: configured, source admin, hint masked, values normalized", r.status === 200 && st.configured === true && st.source === "admin" && st.has_credentials === true && st.access_key_id_hint === "••••" && st.public_url === S3.publicUrl && st.prefix === `${P}medusa/` && st.endpoint === S3.endpoint && st.endpoint_is_custom === !LIVE && st.download_url_ttl === 120 && st.encryption.status === "ok" && st.credentials_saved_at, st)
+  check("settings saved: configured, source admin, hint masked, values normalized", r.status === 200 && st.configured === true && st.source === "admin" && st.has_credentials === true && st.access_key_id_hint === expectedHint(S3.key) && st.public_url === S3.publicUrl && st.prefix === `${P}medusa/` && st.endpoint === S3.endpoint && st.endpoint_is_custom === !LIVE && st.download_url_ttl === 120 && st.encryption.status === "ok" && st.credentials_saved_at, st)
   check("saved settings response never contains the secret", !JSON.stringify(r.json).includes(S3.secret) && !JSON.stringify(r.json).includes("encrypted"), r.json)
   const row = spawnSync("docker", ["exec", PG_CONTAINER, "psql", "-h", "127.0.0.1", "-U", "postgres", "-d", DB_NAME, "-tAc", "select access_key_id_encrypted, secret_access_key_encrypted from r2_setting"], { encoding: "utf8" }).stdout
   check("credentials are stored encrypted (v1.<iv>.<tag>.<ct>), never in clear", /^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\|v1\./.test(row.trim()) && !row.includes(S3.secret), row.trim().slice(0, 80))
@@ -554,7 +557,10 @@ async function checks() {
   console.log("\nChange log and URL template")
   r = await api("GET", "/admin/r2/settings", { headers: admin })
   const ev = r.json.events ?? []
-  check("GET settings returns the change log, newest first, with the actor's e-mail", ev.length >= 4 && (!corsApplied || ev[0].action === "cors.applied") && ev.every((e) => e.actor_email === ADMIN.email) && ev.some((e) => e.action === "settings.saved" && e.fields.includes("access_key_id") && e.fields.includes("secret_access_key") && e.fields.includes("bucket")), ev.slice(0, 5))
+  // exactly what this run did so far: the first save (credentials + bucket…), the private-bucket save when there is
+  // one, and two CORS rules when the token could apply them. Test connection and rejected uploads log nothing.
+  const expectedEvents = 1 + (S3.privateBucket ? 1 : 0) + (corsApplied ? 2 : 0)
+  check("GET settings returns the change log, newest first, with the actor's e-mail", ev.length === expectedEvents && (!corsApplied || ev[0].action === "cors.applied") && ev.every((e) => e.actor_email === ADMIN.email) && ev.every((e, i) => i === 0 || e.created_at <= ev[i - 1].created_at) && ev.some((e) => e.action === "settings.saved" && e.fields.includes("access_key_id") && e.fields.includes("secret_access_key") && e.fields.includes("bucket")) && (!S3.privateBucket || ev.some((e) => e.action === "settings.saved" && e.fields.join() === "private_bucket")), { expectedEvents, ev: ev.slice(0, 5) })
   check("the change log never contains secret values", !JSON.stringify(ev).includes(S3.secret) && !JSON.stringify(ev).includes(S3.key), ev.slice(0, 3))
   r = await api("POST", "/admin/r2/settings", { headers: admin, body: { public_url_template: "no placeholder" } })
   check("template without {key} is refused", r.status === 400 && /\{key\}/.test(r.json.message), r.json)
@@ -677,7 +683,7 @@ async function optionsChecks() {
   const admin = await login()
   console.log("\nProvider options as the only source")
   let r = await api("GET", "/admin/r2/settings", { headers: admin })
-  check("settings resolved from options", r.status === 200 && r.json.settings.configured === true && r.json.settings.source === "options" && r.json.settings.access_key_id_hint === "••••", r.json)
+  check("settings resolved from options", r.status === 200 && r.json.settings.configured === true && r.json.settings.source === "options" && r.json.settings.access_key_id_hint === expectedHint(S3.key), r.json)
   r = await api("POST", "/admin/uploads", { headers: admin, raw: multipart([{ name: "a.png", type: "image/png", content: PNG }]) })
   check("upload works with options only", r.status === 200 && r.json.files[0].url.startsWith(`${S3.publicUrl}/a-`), r.json)
   check("…served publicly", (await fetch(r.json.files[0].url)).status === 200)
