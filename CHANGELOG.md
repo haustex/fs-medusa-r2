@@ -5,6 +5,11 @@ All notable changes to `medusa-storage-r2`. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-10
+
+Same code as 0.1.0, published from GitHub Actions through npm trusted publishing with provenance (0.1.0 was
+published by hand).
+
 ## [0.1.0] - 2026-11-10
 
 First release.
