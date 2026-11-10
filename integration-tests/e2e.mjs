@@ -346,7 +346,8 @@ async function checks() {
   r = await api("POST", "/admin/r2/test-connection", { headers: admin, body: { endpoint: S3.endpoint, access_key_id: S3.key, secret_access_key: "wrong", bucket: S3.bucket } })
   check("wrong secret → bucket check fails with HTTP 403", r.json.ok === false && r.json.checks[0].name === "bucket" && /403|Forbidden|SignatureDoesNotMatch/.test(r.json.checks[0].detail), r.json)
   r = await api("POST", "/admin/r2/test-connection", { headers: admin, body: { endpoint: S3.endpoint, access_key_id: S3.key, secret_access_key: S3.secret, bucket: "does-not-exist-" + Date.now() } })
-  check("missing bucket → bucket check fails with HTTP 404", r.json.ok === false && /404|NotFound|NoSuchBucket/.test(r.json.checks[0].detail), r.json)
+  // R2 answers 403 AccessDenied for a bucket outside the token's scope (the least-privilege setup); 404 for a root key
+  check(LIVE ? "missing bucket → bucket check fails with HTTP 403/404" : "missing bucket → bucket check fails with HTTP 404", r.json.ok === false && r.json.checks[0].name === "bucket" && (LIVE ? /403|AccessDenied|404|NotFound|NoSuchBucket/ : /404|NotFound|NoSuchBucket/).test(r.json.checks[0].detail), r.json)
   r = await api("POST", "/admin/r2/test-connection", { headers: admin, body: { endpoint: S3.endpoint, access_key_id: S3.key, secret_access_key: S3.secret, bucket: S3.bucket, public_url: `${S3.publicUrl}/does-not-serve-this`, prefix: `${P}medusa` } })
   check("public URL that does not serve the bucket → only public_url fails", r.json.ok === false && r.json.checks.filter((c) => !c.ok).map((c) => c.name).join() === "public_url", r.json)
   check("the probe object was deleted again", !(await s3.send(new ListObjectsV2Command({ Bucket: S3.bucket, Prefix: P || undefined }))).KeyCount)
