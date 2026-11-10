@@ -35,7 +35,9 @@ Of particular interest:
   entered again.
 - Create the R2 API token with **Object Read & Write** only, scoped to the bucket(s) the store uses. The plugin
   never needs to create or delete buckets.
-- Put files Medusa marks private (exports, imports) in a separate **private bucket** without public access. In a
-  single public bucket their keys are unguessable (ULID) but anyone holding the URL can read them.
+- Put files Medusa marks private (exports, imports) in a separate **private bucket** without public access. Since
+  0.2.0 a private upload is rejected when no private bucket is set; it is never written to the public bucket.
+- The settings change log (`r2_setting_event`) records user, time and field names only. Rotate `R2_ENCRYPTION_KEY`
+  with the `rotate-encryption-key` script (README); the rotation is logged with key fingerprints, not keys.
 - Use a custom domain in front of the bucket for production; the `r2.dev` URL is rate limited and meant for
   development.

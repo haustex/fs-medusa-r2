@@ -32,7 +32,13 @@ This host also runs the **hauskayu.com production store**.
 - Admin page layout (`md:grid-cols-[240px_1fr]`) is not picked up by Tailwind when the plugin is resolved from a local
   path in the test app; installed from npm it renders as in medusa-payment-doit.
 
+- 0.2.0 decisions: private files without a private bucket are rejected (never public); content type is sniffed from
+  the first 512 bytes (`src/lib/content-type.ts`); the upload stream is a Transform that holds the head until it
+  can sniff, then feeds `@aws-sdk/lib-storage`; CORS is only touched by the Admin button (needs an Admin token);
+  the change log stores field names only; `medusa exec` scripts take word arguments (`key=value`, no `--`).
+- Live R2 suite: `R2_E2E_LIVE=1` + `R2_LIVE_*` (workflow `r2-live.yml`, environment `r2-live`); unique prefix per
+  run, cleaned up in `finally`. Never put R2 credentials in the repo or in chat.
+
 ## Backlog
 
-- 0.2.0: `medusa exec` command to copy `static/` (file-local) into the bucket and rewrite image/thumbnail URLs.
 - Dashboard widget with bucket usage (needs the Cloudflare API, a different token than the S3 pair).
