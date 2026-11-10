@@ -39,6 +39,9 @@ All notable changes to `medusa-storage-r2`. The format follows
 - `public_url_template` (Admin field, option, `R2_PUBLIC_URL_TEMPLATE`): e.g.
   `{public_url}/cdn-cgi/image/format=auto,quality=85/{key}` for Cloudflare Image Transformations. Off by default.
 - `max_attempts`, `connection_timeout_ms`, `request_timeout_ms` provider options.
+- Test connection treats a 403 on `HeadBucket` as a warning (an Object Read & Write token may not HEAD the
+  bucket) and lets the probe object decide; a 403 on the probe write too is reported as wrong credentials / token
+  scope. The private bucket is proven with a probe write when HEAD is refused.
 - Live E2E against a real R2 bucket (`R2_E2E_LIVE=1`, workflow "R2 live": weekly + manual, GitHub Environment
   `r2-live`, skipped without credentials). Unique prefix per run, cleaned up afterwards.
 - E2E coverage: private rejection (buffer and stream), 12 MB chunked stream upload without content-length, unicode

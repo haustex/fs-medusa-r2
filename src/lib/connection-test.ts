@@ -32,6 +32,13 @@ export type ConnectionTestResult = {
 
 const PUBLIC_FETCH_TIMEOUT_MS = 8_000
 
+/** 403 for lack of permission; a wrong key or secret is also a 403 but names itself and is a real failure */
+function isForbidden(e: unknown): boolean {
+  const err = e as { name?: string; $metadata?: { httpStatusCode?: number } }
+  if (err.name === "SignatureDoesNotMatch" || err.name === "InvalidAccessKeyId") return false
+  return err.$metadata?.httpStatusCode === 403 || err.name === "AccessDenied" || err.name === "Forbidden"
+}
+
 function describeError(e: unknown): string {
   const err = e as { name?: string; message?: string; $metadata?: { httpStatusCode?: number } }
   const status = err.$metadata?.httpStatusCode
@@ -40,15 +47,25 @@ function describeError(e: unknown): string {
   return parts.filter(Boolean).join(": ").slice(0, 300) || "unknown error"
 }
 
+const HEAD_FORBIDDEN = "HEAD bucket not permitted for this token (normal for an Object Read & Write token); checked with a probe object instead"
+
 /**
  * Exercises the configured bucket end to end: HEAD bucket, write a probe
  * object, read it back, fetch it through the public URL (when one is set),
  * HEAD the private bucket (when one is set), delete the probe. Each step is
  * reported separately so the Admin can say exactly what is wrong.
+ *
+ * An R2 token with Object Read & Write only (the recommended least-privilege
+ * token) may be refused HEAD bucket with 403. That is a warning, not a
+ * failure: the probe object then decides whether the bucket is usable.
  */
 export async function testConnection(
   settings: R2Settings,
-  { fetchImpl = fetch, origin = null }: { fetchImpl?: typeof fetch; origin?: string | null } = {}
+  {
+    fetchImpl = fetch,
+    origin = null,
+    client: injectedClient,
+  }: { fetchImpl?: typeof fetch; origin?: string | null; client?: S3Client } = {}
 ): Promise<ConnectionTestResult> {
   const started = Date.now()
   const checks: Check[] = []
@@ -67,7 +84,7 @@ export async function testConnection(
 
   let client: S3Client
   try {
-    client = createR2Client(settings)
+    client = injectedClient ?? createR2Client(settings)
   } catch (e) {
     checks.push({ name: "bucket", ok: false, detail: describeError(e) })
     return done()
@@ -78,9 +95,12 @@ export async function testConnection(
     await client.send(new HeadBucketCommand({ Bucket: bucket }))
     checks.push({ name: "bucket", ok: true, detail: null })
   } catch (e) {
-    checks.push({ name: "bucket", ok: false, detail: describeError(e) })
-    client.destroy()
-    return done()
+    if (!isForbidden(e)) {
+      checks.push({ name: "bucket", ok: false, detail: describeError(e) })
+      client.destroy()
+      return done()
+    }
+    checks.push({ name: "bucket", ok: false, warning: true, detail: HEAD_FORBIDDEN })
   }
 
   const key = `${settings.prefix}.medusa-storage-r2/probe-${ulid()}.txt`
@@ -91,6 +111,14 @@ export async function testConnection(
     )
     checks.push({ name: "write", ok: true, detail: key })
   } catch (e) {
+    const bucketCheck = checks[0]
+    if (bucketCheck.warning && (e as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 403) {
+      // HEAD and the write both refused: not an object-only token, but wrong credentials or a token
+      // that is not scoped to this bucket. HEAD carries no error body, so the write's message is the useful one.
+      bucketCheck.ok = false
+      bucketCheck.warning = false
+      bucketCheck.detail = `${describeError(e)} — HEAD bucket and write both refused: wrong access key/secret, or the token is not scoped to this bucket`
+    }
     checks.push({ name: "write", ok: false, detail: describeError(e) })
     client.destroy()
     return done()
@@ -127,7 +155,21 @@ export async function testConnection(
       await client.send(new HeadBucketCommand({ Bucket: settings.privateBucket }))
       checks.push({ name: "private_bucket", ok: true, detail: null })
     } catch (e) {
-      checks.push({ name: "private_bucket", ok: false, detail: describeError(e) })
+      if (!isForbidden(e)) {
+        checks.push({ name: "private_bucket", ok: false, detail: describeError(e) })
+      } else {
+        // Object-only token: prove the bucket with a probe object instead of HEAD bucket
+        const privateKey = `${settings.prefix}.medusa-storage-r2/probe-${ulid()}.txt`
+        try {
+          await client.send(
+            new PutObjectCommand({ Bucket: settings.privateBucket, Key: privateKey, Body: body, ContentType: "text/plain", CacheControl: "no-store" })
+          )
+          await client.send(new DeleteObjectCommand({ Bucket: settings.privateBucket, Key: privateKey }))
+          checks.push({ name: "private_bucket", ok: true, detail: "write/delete probe OK (HEAD bucket not permitted for this token)" })
+        } catch (e2) {
+          checks.push({ name: "private_bucket", ok: false, detail: describeError(e2) })
+        }
+      }
     }
   }
 

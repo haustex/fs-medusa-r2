@@ -305,6 +305,7 @@ reports "key mismatch" until it is restarted.
 | Symptom | Cause / fix |
 | --- | --- |
 | Test connection: `bucket` → `HTTP 403` / `SignatureDoesNotMatch` | Wrong secret, or the token is not scoped to this bucket. Create a new token (Object Read & Write, this bucket). |
+| Test connection: `bucket` shows a ⚠ "HEAD bucket not permitted" | Normal for an Object Read & Write token: R2 may refuse `HeadBucket`. The probe object then proves the bucket; the test is still OK when write/read/delete pass. |
 | `bucket` → `HTTP 404` / `NoSuchBucket` | Bucket name typo, or the bucket lives in another jurisdiction (EU/FedRAMP) than the one selected. |
 | `bucket` → `HTTP 400` / `InvalidArgument` | Account ID wrong (the endpoint host is derived from it). |
 | `public_url` → `HTTP 404` or `content differs` | Public access is not enabled on the bucket, the Public URL belongs to another bucket, or a custom domain is not active yet. |

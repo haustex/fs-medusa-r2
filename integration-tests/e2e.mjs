@@ -39,6 +39,8 @@ const {
   PutBucketPolicyCommand,
   ListObjectsV2Command,
   DeleteObjectsCommand,
+  PutObjectCommand,
+  DeleteObjectCommand,
   GetBucketCorsCommand,
   DeleteBucketCorsCommand,
 } = require("@aws-sdk/client-s3")
@@ -160,7 +162,27 @@ const s3 = new S3Client({
 
 async function prepareBuckets() {
   if (LIVE) {
-    await s3.send(new ListObjectsV2Command({ Bucket: S3.bucket, MaxKeys: 1 }))
+    // Object operations only: the live token is Object Read & Write scoped to the test bucket(s), so no
+    // bucket-level call (ListBuckets, CreateBucket, bucket policy/CORS) is made here. Each bucket is proven
+    // with a probe object under the run prefix.
+    for (const Bucket of [S3.bucket, S3.privateBucket].filter(Boolean)) {
+      const Key = `${P}.preflight.txt`
+      try {
+        await s3.send(new PutObjectCommand({ Bucket, Key, Body: "preflight", ContentType: "text/plain" }))
+        await s3.send(new HeadObjectCommand({ Bucket, Key }))
+        await s3.send(new DeleteObjectCommand({ Bucket, Key }))
+      } catch (e) {
+        const status = e?.$metadata?.httpStatusCode
+        throw new Error(
+          `preflight on bucket "${Bucket}" failed: ${e?.name ?? "Error"} (HTTP ${status ?? "?"}). ` +
+            (status === 403
+              ? "The token may not write this bucket. Check in Cloudflare: the token's bucket scope contains exactly this bucket name, its permission is Object Read & Write, R2_LIVE_ACCOUNT_ID is the account that owns the bucket, and R2_LIVE_JURISDICTION matches the bucket (empty for default)."
+              : status === 404
+                ? "The bucket does not exist under this account/jurisdiction: check R2_LIVE_BUCKET / R2_LIVE_PRIVATE_BUCKET and R2_LIVE_JURISDICTION."
+                : e?.message ?? "")
+        )
+      }
+    }
     return
   }
   for (let i = 0; ; i++) {
@@ -199,14 +221,27 @@ async function prepareBuckets() {
 /** Live runs: remove everything this run wrote (keys under the run prefix) in both buckets. */
 async function cleanupLive() {
   if (!LIVE) return
+  let removed = 0
   for (const Bucket of [S3.bucket, S3.privateBucket].filter(Boolean)) {
+    // Every key this run wrote (tracked from the API responses); the listing, when permitted, catches the rest
+    for (const Key of written) {
+      if (!Key.startsWith(P)) continue
+      await s3.send(new DeleteObjectCommand({ Bucket, Key })).then(() => removed++).catch(() => undefined)
+    }
     for (;;) {
-      const list = await s3.send(new ListObjectsV2Command({ Bucket, Prefix: P }))
+      let list
+      try {
+        list = await s3.send(new ListObjectsV2Command({ Bucket, Prefix: P }))
+      } catch (e) {
+        if (e?.$metadata?.httpStatusCode === 403) break // object-only token: tracked keys were enough
+        throw e
+      }
       if (!list.Contents?.length) break
-      await s3.send(new DeleteObjectsCommand({ Bucket, Delete: { Objects: list.Contents.map(({ Key }) => ({ Key })), Quiet: true } }))
+      for (const { Key } of list.Contents) await s3.send(new DeleteObjectCommand({ Bucket, Key })).then(() => removed++)
       if (!list.IsTruncated) break
     }
   }
+  console.log(`\ncleanup: ${removed} object(s) removed under ${P}`)
 }
 
 async function objectExists(Bucket, Key) {
@@ -251,7 +286,32 @@ async function api(method, url, { body, headers = {}, raw } = {}) {
   } catch {
     json = text
   }
+  rememberKeys(json)
   return { status: res.status, json, headers: res.headers }
+}
+
+/** Every object key a response mentions, so a live run can clean up without listing the bucket. */
+const written = new Set()
+function rememberKeys(json) {
+  if (!json || typeof json !== "object") return
+  for (const f of json.files ?? []) if (f?.id) written.add(f.id)
+  if (json.file?.id) written.add(json.file.id)
+  if (json.fileKey) written.add(json.fileKey)
+  if (typeof json.filename === "string" && json.filename.includes("/")) written.add(json.filename)
+}
+
+/** Number of keys under a prefix, or null when the token may not list (object-only tokens on some stores). */
+async function listCount(Bucket, Prefix) {
+  try {
+    return (await s3.send(new ListObjectsV2Command({ Bucket, Prefix: Prefix || undefined }))).KeyCount ?? 0
+  } catch (e) {
+    if (e?.$metadata?.httpStatusCode === 403) return null
+    throw e
+  }
+}
+
+function skip(name, why) {
+  console.log(`  - ${name} (skipped: ${why})`)
 }
 
 async function main() {
@@ -341,16 +401,21 @@ async function checks() {
     headers: admin,
     body: { endpoint: S3.endpoint, access_key_id: S3.key, secret_access_key: S3.secret, bucket: S3.bucket, public_url: S3.publicUrl, private_bucket: S3.privateBucket, prefix: `${P}medusa` },
   })
-  const names = (r.json.checks ?? []).map((c) => `${c.name}:${c.ok}`)
+  // an object-only token may get 403 on HEAD bucket: reported as a warning, the probe object decides
+  const names = (r.json.checks ?? []).map((c) => `${c.name}:${c.ok || (LIVE && c.warning === true)}`)
   check("all checks pass incl. public URL and private bucket", r.status === 200 && r.json.ok === true && names.join(",") === `bucket:true,write:true,read:true,public_url:true,${S3.privateBucket ? "private_bucket:true," : ""}delete:true`, r.json)
   r = await api("POST", "/admin/r2/test-connection", { headers: admin, body: { endpoint: S3.endpoint, access_key_id: S3.key, secret_access_key: "wrong", bucket: S3.bucket } })
-  check("wrong secret → bucket check fails with HTTP 403", r.json.ok === false && r.json.checks[0].name === "bucket" && /403|Forbidden|SignatureDoesNotMatch/.test(r.json.checks[0].detail), r.json)
+  check("wrong secret → bucket check fails with HTTP 403", r.json.ok === false && r.json.checks[0].name === "bucket" && !r.json.checks[0].warning && /403|Forbidden|SignatureDoesNotMatch/.test(r.json.checks[0].detail), r.json)
   r = await api("POST", "/admin/r2/test-connection", { headers: admin, body: { endpoint: S3.endpoint, access_key_id: S3.key, secret_access_key: S3.secret, bucket: "does-not-exist-" + Date.now() } })
   // R2 answers 403 AccessDenied for a bucket outside the token's scope (the least-privilege setup); 404 for a root key
-  check(LIVE ? "missing bucket → bucket check fails with HTTP 403/404" : "missing bucket → bucket check fails with HTTP 404", r.json.ok === false && r.json.checks[0].name === "bucket" && (LIVE ? /403|AccessDenied|404|NotFound|NoSuchBucket/ : /404|NotFound|NoSuchBucket/).test(r.json.checks[0].detail), r.json)
+  // live, object-only token: HEAD bucket → 403 (warning), then the probe write fails with 403 → still a clear failure
+  const hardFail = (r.json.checks ?? []).find((c) => !c.ok && !c.warning)
+  check(LIVE ? "missing bucket → connection test fails with HTTP 403/404" : "missing bucket → bucket check fails with HTTP 404", r.json.ok === false && !!hardFail && (LIVE ? /403|AccessDenied|404|NotFound|NoSuchBucket/ : /404|NotFound|NoSuchBucket/).test(hardFail.detail), r.json)
   r = await api("POST", "/admin/r2/test-connection", { headers: admin, body: { endpoint: S3.endpoint, access_key_id: S3.key, secret_access_key: S3.secret, bucket: S3.bucket, public_url: `${S3.publicUrl}/does-not-serve-this`, prefix: `${P}medusa` } })
   check("public URL that does not serve the bucket → only public_url fails", r.json.ok === false && r.json.checks.filter((c) => !c.ok).map((c) => c.name).join() === "public_url", r.json)
-  check("the probe object was deleted again", !(await s3.send(new ListObjectsV2Command({ Bucket: S3.bucket, Prefix: P || undefined }))).KeyCount)
+  const probeKey = r.json.checks?.find((c) => c.name === "write")?.detail
+  const probeLeft = await listCount(S3.bucket, P)
+  check("the probe object was deleted again", probeLeft === null ? !!probeKey && !(await objectExists(S3.bucket, probeKey)) : probeLeft === 0)
 
   console.log("\nSave settings")
   r = await api("POST", "/admin/r2/settings", { headers: admin, body: { access_key_id: S3.key } })
@@ -428,7 +493,9 @@ async function checks() {
   console.log("\nPrivate files")
   r = await api("POST", "/admin/e2e/file", { headers: admin, body: { filename: "exports/products.csv", content: Buffer.from("id,title\n1,A").toString("base64"), mimeType: "text/csv", access: "private" } })
   check("private file without a private bucket is REJECTED (never written to the public bucket)", r.status === 400 && /private bucket/i.test(r.json.message) && /never written to the public bucket/.test(r.json.message), r.json)
-  check("…and nothing landed in the public bucket", !(await s3.send(new ListObjectsV2Command({ Bucket: S3.bucket, Prefix: `${P}medusa/exports/` }))).KeyCount)
+  const exportsLeft = await listCount(S3.bucket, `${P}medusa/exports/`)
+  if (exportsLeft === null) skip("…and nothing landed in the public bucket", "the token may not list objects")
+  else check("…and nothing landed in the public bucket", exportsLeft === 0)
   r = await api("PUT", `/admin/e2e/file?filename=${encodeURIComponent("exports/stream.csv")}&mimeType=text/csv&access=private`, { headers: admin, raw: { body: Buffer.from("a,b"), type: "application/octet-stream" } })
   check("private stream upload without a private bucket is rejected too", r.status === 400 && /private bucket/i.test(r.json.message), r.json)
 
@@ -567,6 +634,7 @@ async function migrationChecks(admin) {
   psql(`CREATE TABLE IF NOT EXISTS e2e_media (id serial primary key, url text)`, DB_NAME)
   psql(`INSERT INTO e2e_media (url) VALUES ('${oldUrls.csv}'), ('${oldUrls.missing}')`, DB_NAME)
   const prefix = `${P}shop/2026/`
+  for (const rel of ["products/talenan jati.png", "catalog.csv", "products/big.bin", "products/gone.png"]) written.add(prefix + rel)
   const newUrl = (rel) => `${S3.publicUrl}/${encodeKey(prefix + rel)}`
   const migrate = (...words) =>
     spawnSync("node", [GUARD, MEDUSA, "exec", path.join(PLUGIN_DIR, ".medusa/server/src/scripts/migrate-to-r2.js"), "source=local", `static-dir=${staticDir}`, `base-url=${BASE_URL}`, `report=${reportDir}`, "tables=image.url,product.thumbnail,e2e_media.url", ...words], { cwd: APP_DIR, env, encoding: "utf8" })
