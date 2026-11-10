@@ -33,7 +33,7 @@ export async function DELETE(req: AuthenticatedMedusaRequest, res: MedusaRespons
 export async function PUT(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
   const files: IFileModuleService = req.scope.resolve(Modules.FILE)
   const filename = String(req.query.filename)
-  const mimeType = req.query.mimeType ? String(req.query.mimeType) : undefined
+  const mimeType = req.query.mimeType ? String(req.query.mimeType) : "application/octet-stream"
   const access = (req.query.access as "public" | "private" | undefined) ?? "public"
   const { writeStream, promise, fileKey } = await files.getUploadStream({ filename, mimeType, access })
   req.pipe(writeStream)
