@@ -147,6 +147,12 @@ echo "R2_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> .env   # same value on serve
 Until the store is configured, uploads fail with `Cloudflare R2 is not configured (missing: …). Open Settings →
 Cloudflare R2 …`; nothing else in Medusa is affected.
 
+> **Note for pnpm without hoisting or a locally linked copy:** the Admin build picks up this plugin's Tailwind classes
+> through `require.resolve("medusa-storage-r2/admin")` from `@medusajs/admin-bundler`; if the bundler cannot resolve the package
+> (pnpm with `hoist=false`, or a plugin symlinked from outside the project), the plugin's Admin pages lose their layout.
+> npm, Yarn and pnpm's defaults are fine; otherwise install from npm (or `npm pack`) next to the bundler, or add
+> `hoist-pattern[]=medusa-storage-r2` to `.npmrc`.
+
 ### Cloudflare setup
 
 1. **Bucket**: Cloudflare dashboard → R2 → Create bucket. Note the **Account ID** shown on the R2 overview page.
@@ -418,6 +424,12 @@ Lalu:
 npx medusa db:migrate
 echo "R2_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> .env   # nilai sama di server dan worker
 ```
+
+> **Catatan untuk pnpm tanpa hoisting atau plugin yang di-symlink lokal:** build Admin mengambil class Tailwind plugin
+> ini lewat `require.resolve("medusa-storage-r2/admin")` dari `@medusajs/admin-bundler`; kalau bundler tidak bisa me-resolve paketnya
+> (pnpm dengan `hoist=false`, atau plugin di-symlink dari luar proyek), halaman Admin plugin kehilangan layout-nya. npm,
+> Yarn, dan pnpm bawaan aman; selain itu pasang dari npm (atau `npm pack`) di sebelah bundler, atau tambahkan
+> `hoist-pattern[]=medusa-storage-r2` di `.npmrc`.
 
 ### Setup di Cloudflare
 

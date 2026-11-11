@@ -5,6 +5,18 @@ All notable changes to `medusa-storage-r2`. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-11
+
+### Fixed
+
+- Admin → Settings → Cloudflare R2, "Test connection": the warning icon used `text-ui-fg-warning`, which is not a
+  Medusa UI token, so it rendered in the default colour. It now uses `text-ui-tag-orange-icon` like the dashboard.
+
+### Documentation
+
+- README: note on Admin Tailwind classes when the plugin is not resolvable from `@medusajs/admin-bundler` (pnpm without
+  hoisting, locally symlinked plugin).
+
 ## [0.2.0] - 2026-11-10
 
 Verified against live Cloudflare R2 (workflow "R2 live": the full E2E suite — uploads, 12 MB multipart stream,

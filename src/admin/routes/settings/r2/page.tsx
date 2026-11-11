@@ -213,7 +213,7 @@ const SettingsForm = ({ settings, events }: { settings: PublicSettings; events: 
                   {c.ok ? (
                     <CheckCircle className="mt-0.5 shrink-0 text-ui-fg-interactive" />
                   ) : c.warning ? (
-                    <ExclamationCircle className="mt-0.5 shrink-0 text-ui-fg-warning" />
+                    <ExclamationCircle className="mt-0.5 shrink-0 text-ui-tag-orange-icon" />
                   ) : (
                     <XCircle className="mt-0.5 shrink-0 text-ui-fg-error" />
                   )}
