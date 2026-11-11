@@ -17,6 +17,11 @@ All notable changes to `medusa-storage-r2`. The format follows
 - README: note on Admin Tailwind classes when the plugin is not resolvable from `@medusajs/admin-bundler` (pnpm without
   hoisting, locally symlinked plugin).
 
+### Tests
+
+- CI starts RustFS with `RUSTFS_REGION=auto`: the image rebuilt on 11 Nov 2026 rejects CreateBucket from a client with
+  region `auto` (`InvalidLocationConstraint`) unless the server's region matches.
+
 ## [0.2.0] - 2026-11-10
 
 Verified against live Cloudflare R2 (workflow "R2 live": the full E2E suite — uploads, 12 MB multipart stream,

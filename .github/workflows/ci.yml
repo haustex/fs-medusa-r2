@@ -62,8 +62,10 @@ jobs:
 
       - name: Start RustFS (S3-compatible stand-in for R2)
         run: |
+          # RUSTFS_REGION=auto: the E2E's S3 client uses region "auto" like the plugin does against R2; RustFS images from
+          # 11 Nov 2026 on reject CreateBucket with a LocationConstraint that differs from the server's region
           docker run -d --name r2-spike-minio -e RUSTFS_ACCESS_KEY=minioadmin -e RUSTFS_SECRET_KEY=minioadmin \
-            -p 127.0.0.1:59000:9000 rustfs/rustfs:latest
+            -e RUSTFS_REGION=auto -p 127.0.0.1:59000:9000 rustfs/rustfs:latest
           for _ in $(seq 1 60); do
             code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:59000/ || true)
             [ "$code" != "000" ] && exit 0

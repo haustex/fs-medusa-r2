@@ -26,7 +26,9 @@ This host also runs the **hauskayu.com production store**.
   WHEN_REQUIRED` (R2 and RustFS reject CRC trailers). One client per (endpoint, key, secret).
 - Public files need `public_url`; without it the provider returns a presigned link and warns. Not configured →
   `MedusaError.INVALID_DATA` with the Settings hint; Medusa itself keeps running.
-- E2E uses RustFS (`rustfs/rustfs`, MinIO-compatible; the `minio/minio` images are no longer on public registries)
+- E2E uses RustFS (`rustfs/rustfs`, MinIO-compatible; the `minio/minio` images are no longer on public registries),
+  started with `RUSTFS_REGION=auto`: since the 11 Nov 2026 image, CreateBucket from a client with region `auto` (what
+  the suite and the plugin use, like R2) fails with `InvalidLocationConstraint` unless the server's region is `auto` too
   with a public-read bucket policy standing in for r2.dev. Both suites: default (Admin-configured) and
   `R2_E2E_OPTIONS=1` (provider options only).
 - Admin page layout (`md:grid-cols-[240px_1fr]`) is not picked up by Tailwind when the plugin is resolved from a local

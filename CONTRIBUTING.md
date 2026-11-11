@@ -36,7 +36,7 @@ connection test, uploads, presigned URLs, private files, deletes and live reconf
 docker run -d --name r2-spike-pg -e POSTGRES_PASSWORD=spike -e POSTGRES_DB=r2_spike \
   -p 127.0.0.1:55435:5432 postgres:17-alpine
 docker run -d --name r2-spike-minio -e RUSTFS_ACCESS_KEY=minioadmin -e RUSTFS_SECRET_KEY=minioadmin \
-  -p 127.0.0.1:59000:9000 rustfs/rustfs:latest
+  -e RUSTFS_REGION=auto -p 127.0.0.1:59000:9000 rustfs/rustfs:latest   # region auto, as the plugin uses against R2
 npm run build && node integration-tests/e2e.mjs
 R2_E2E_OPTIONS=1 node integration-tests/e2e.mjs    # provider options as the only source
 ```
