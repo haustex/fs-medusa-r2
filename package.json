@@ -1,6 +1,6 @@
 {
   "name": "medusa-storage-r2",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Cloudflare R2 file storage for Medusa v2: credentials and bucket configured in the Admin (encrypted), public URL or custom domain, presigned uploads and downloads, connection test — by Haus Kayu",
   "author": "Haus Kayu <dev@hauskayu.com> (https://hauskayu.com)",
   "license": "MIT",

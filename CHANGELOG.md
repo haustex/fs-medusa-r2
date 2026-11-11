@@ -5,7 +5,9 @@ All notable changes to `medusa-storage-r2`. The format follows
 
 ## [Unreleased]
 
-## [0.2.1] - 2026-11-11
+## [0.2.2] - 2026-11-11
+
+Same content as 0.2.1 plus the CI fix; 0.2.1 was tagged but never reached npm (see below).
 
 ### Fixed
 
@@ -21,6 +23,12 @@ All notable changes to `medusa-storage-r2`. The format follows
 
 - CI starts RustFS with `RUSTFS_REGION=auto`: the image rebuilt on 11 Nov 2026 rejects CreateBucket from a client with
   region `auto` (`InvalidLocationConstraint`) unless the server's region matches.
+
+## [0.2.1] - 2026-11-11 (not published)
+
+Tag `v0.2.1` exists, but its release failed in CI: the `rustfs/rustfs:latest` image rebuilt that day rejected the E2E
+suite's bucket creation (`InvalidLocationConstraint`), so the publish step never ran. Nothing was published; 0.2.2
+carries the same changes.
 
 ## [0.2.0] - 2026-11-10
 
