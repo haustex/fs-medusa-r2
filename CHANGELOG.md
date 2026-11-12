@@ -5,6 +5,13 @@ All notable changes to `medusa-storage-r2`. The format follows
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-12
+
+### Fixed
+
+- `@medusajs/test-utils` is no longer listed as a peer dependency: it is only used by the plugin's own tests
+  (it stays a devDependency), so installing the plugin no longer asks for it or warns about it.
+
 ## [0.2.2] - 2026-11-11
 
 Same content as 0.2.1 plus the CI fix; 0.2.1 was tagged but never reached npm (see below).
