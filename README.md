@@ -523,6 +523,21 @@ own store on Medusa. The plugins we need and cannot find, we build and publish.
 This is a community plugin, not a Cloudflare product. Cloudflare and R2 are trademarks of Cloudflare, Inc.; MinIO
 and RustFS of their respective owners. Use at your own risk; see the [license](LICENSE).
 
+## Sponsors
+
+This plugin is free and MIT licensed, maintained by a small furniture workshop in Jepara, Indonesia. If it saves you
+time, [sponsor Haus Kayu on GitHub](https://github.com/sponsors/haustex).
+<br>Plugin ini gratis (MIT) dan dirawat oleh workshop furnitur kecil di Jepara. Kalau plugin ini menghemat waktumu,
+[dukung Haus Kayu lewat GitHub Sponsors](https://github.com/sponsors/haustex).
+
+### Business sponsors
+
+_Your logo here. [Become a Business sponsor](https://github.com/sponsors/haustex) ($50/month)._
+
+### Backers
+
+_Your name here. [Become a Backer](https://github.com/sponsors/haustex) ($10/month)._
+
 ## License
 
 [MIT](LICENSE) © Haus Kayu
